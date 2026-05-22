@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SSL Manager - 系统初始化</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body class="auth-page">
+    <div class="auth-container">
+        <div class="auth-card">
+            <h1>SSL Manager</h1>
+            <h2>系统初始化</h2>
+            <div id="init-steps">
+                <div class="step active" id="init-admin-section">
+                    <h3>步骤 1: 创建管理员账户</h3>
+                    <form id="init-admin-form">
+                        <div class="form-group">
+                            <label for="admin-username">用户名</label>
+                            <input type="text" id="admin-username" name="username" required minlength="3" placeholder="请输入管理员用户名">
+                        </div>
+                        <div class="form-group">
+                            <label for="admin-password">密码</label>
+                            <input type="password" id="admin-password" name="password" required minlength="6" placeholder="请输入密码（至少6位）">
+                        </div>
+                        <button type="submit" class="btn btn-primary btn-block">创建管理员</button>
+                    </form>
+                </div>
+                <div class="step" id="init-config-section" style="display:none;">
+                    <h3>步骤 2: 系统配置</h3>
+                    <form id="init-config-form">
+                        <div class="form-group">
+                            <label for="cfg-external-url">外部访问地址</label>
+                            <input type="text" id="cfg-external-url" name="external_url" placeholder="http://localhost:8080">
+                        </div>
+                        <div class="form-group">
+                            <label for="cfg-listen-addr">监听地址</label>
+                            <input type="text" id="cfg-listen-addr" name="listen_addr" placeholder=":8080">
+                        </div>
+                        <div class="form-group">
+                            <label for="cfg-heartbeat-timeout">心跳超时（秒）</label>
+                            <input type="number" id="cfg-heartbeat-timeout" name="heartbeat_timeout_seconds" value="120" min="10">
+                        </div>
+                        <div class="form-group">
+                            <label for="cfg-poll-interval">轮询间隔（秒）</label>
+                            <input type="number" id="cfg-poll-interval" name="poll_interval_seconds" value="60" min="5">
+                        </div>
+                        <div class="form-group">
+                            <label for="cfg-alert-days">证书到期提醒天数</label>
+                            <input type="number" id="cfg-alert-days" name="default_before_days" value="15" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label for="cfg-certbot-path">Certbot 路径</label>
+                            <input type="text" id="cfg-certbot-path" name="certbot_binary_path" placeholder="certbot">
+                        </div>
+                        <div class="form-group">
+                            <label for="cfg-certbot-datadir">Certbot 数据目录</label>
+                            <input type="text" id="cfg-certbot-datadir" name="certbot_data_dir" placeholder="可选">
+                        </div>
+                        <div class="form-group">
+                            <label for="cfg-certbot-email">Certbot 邮箱</label>
+                            <input type="email" id="cfg-certbot-email" name="certbot_email" placeholder="用于 Let's Encrypt 证书申请">
+                        </div>
+                        <div class="form-group">
+                            <label for="cfg-readonly-enabled">启用只读模式</label>
+                            <input type="checkbox" id="cfg-readonly-enabled" name="readonly_enabled">
+                        </div>
+                        <div class="form-group">
+                            <label for="cfg-readonly-password">只读密码</label>
+                            <input type="password" id="cfg-readonly-password" name="readonly_password" placeholder="可选，用于只读访问">
+                        </div>
+                        <div class="form-group">
+                            <label for="cfg-monitor-port">域名监控端口</label>
+                            <input type="number" id="cfg-monitor-port" name="monitor_default_port" value="443" min="1" max="65535">
+                        </div>
+                        <div class="form-group">
+                            <label for="cfg-monitor-interval">监控间隔（分钟）</label>
+                            <input type="number" id="cfg-monitor-interval" name="monitor_interval_minutes" value="60" min="5">
+                        </div>
+                        <button type="submit" class="btn btn-primary btn-block">保存配置</button>
+                    </form>
+                </div>
+                <div class="step" id="step-done" style="display:none;">
+                    <h3>✅ 初始化完成</h3>
+                    <p>系统已成功初始化，即将跳转到登录页面...</p>
+                </div>
+            </div>
+            <div id="init-error" class="error-message" style="display:none;"></div>
+        </div>
+    </div>
+    <script src="/static/js/app.js"></script>
+    <script src="/static/js/init.js"></script>
+</body>
+</html>

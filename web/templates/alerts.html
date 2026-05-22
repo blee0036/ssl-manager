@@ -1,0 +1,49 @@
+{{template "layout" .}}
+{{define "title"}}告警管理{{end}}
+{{define "page-title"}}告警管理{{end}}
+{{define "content"}}
+<div class="tab-group">
+    <button class="tab active" data-tab="alert-channels">告警渠道</button>
+    <button class="tab" data-tab="alert-history">告警历史</button>
+</div>
+
+<div id="alert-channels" class="tab-content active">
+    <div class="toolbar">
+        <button class="btn btn-primary" id="btn-add-channel">添加渠道</button>
+    </div>
+    <table class="data-table" id="channels-table">
+        <thead>
+            <tr>
+                <th>名称</th>
+                <th>类型</th>
+                <th>配置</th>
+                <th>启用</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody id="channels-body">
+            <tr><td colspan="5" class="empty-state">加载中...</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<div id="alert-history" class="tab-content" style="display:none;">
+    <table class="data-table" id="alerts-table">
+        <thead>
+            <tr>
+                <th>时间</th>
+                <th>级别</th>
+                <th>类型</th>
+                <th>消息</th>
+                <th>状态</th>
+                <th>通知渠道</th>
+            </tr>
+        </thead>
+        <tbody id="alerts-body">
+            <tr><td colspan="6" class="empty-state">加载中...</td></tr>
+        </tbody>
+    </table>
+    <div class="pagination" id="alerts-pagination"></div>
+</div>
+{{end}}
+{{define "scripts"}}<script src="/static/js/alerts.js"></script>{{end}}

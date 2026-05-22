@@ -1,0 +1,107 @@
+{{template "layout" .}}
+{{define "title"}}证书管理{{end}}
+{{define "page-title"}}证书管理{{end}}
+{{define "content"}}
+<div class="toolbar">
+    <button class="btn btn-primary" id="btn-upload-cert" onclick="document.getElementById('upload-cert-form').style.display='block'">上传证书</button>
+    <button class="btn btn-secondary" id="btn-issue-cloudflare" onclick="document.getElementById('issue-cloudflare-form').style.display='block'">Cloudflare 签发</button>
+    <button class="btn btn-secondary" id="btn-issue-manual-dns" onclick="document.getElementById('manual-dns-form').style.display='block'">手动 DNS 签发</button>
+    <div class="search-box">
+        <input type="text" id="cert-search" placeholder="搜索域名...">
+    </div>
+</div>
+
+<!-- Upload Certificate Form -->
+<div id="upload-cert-form" class="form-card" style="display:none;">
+    <h4>上传证书</h4>
+    <form>
+        <div class="form-group">
+            <label for="cert-name">证书名称</label>
+            <input type="text" id="cert-name" required placeholder="请输入证书名称">
+        </div>
+        <div class="form-group">
+            <label for="cert-file">证书文件 (PEM)</label>
+            <input type="file" id="cert-file" accept=".pem,.crt,.cer">
+        </div>
+        <div class="form-group">
+            <label for="key-file">私钥文件 (PEM)</label>
+            <input type="file" id="key-file" accept=".pem,.key">
+        </div>
+        <div class="form-group">
+            <label for="chain-file">证书链文件 (PEM, 可选)</label>
+            <input type="file" id="chain-file" accept=".pem,.crt,.cer">
+        </div>
+        <div class="form-group">
+            <label><input type="checkbox" id="cert-auto-renew"> 自动续期</label>
+        </div>
+        <button type="submit" class="btn btn-primary">上传</button>
+        <button type="button" class="btn btn-secondary" onclick="this.closest('.form-card').style.display='none'">取消</button>
+    </form>
+</div>
+
+<!-- Issue via Cloudflare Form -->
+<div id="issue-cloudflare-form" class="form-card" style="display:none;">
+    <h4>Cloudflare 签发证书</h4>
+    <form>
+        <div class="form-group">
+            <label for="cf-cert-name">证书名称</label>
+            <input type="text" id="cf-cert-name" placeholder="可选，默认使用第一个域名">
+        </div>
+        <div class="form-group">
+            <label for="cf-domains">域名（多个用逗号或换行分隔）</label>
+            <textarea id="cf-domains" rows="3" required placeholder="example.com, *.example.com"></textarea>
+        </div>
+        <div class="form-group">
+            <label for="cf-dns-id">DNS 配置</label>
+            <input type="text" id="cf-dns-id" required placeholder="第三方 DNS 配置 ID">
+        </div>
+        <div class="form-group">
+            <label><input type="checkbox" id="cf-auto-renew"> 自动续期</label>
+        </div>
+        <button type="submit" class="btn btn-primary">签发</button>
+        <button type="button" class="btn btn-secondary" onclick="this.closest('.form-card').style.display='none'">取消</button>
+    </form>
+</div>
+
+<!-- Manual DNS Form -->
+<div id="manual-dns-form" class="form-card" style="display:none;">
+    <h4>手动 DNS 签发证书</h4>
+    <form>
+        <div class="form-group">
+            <label for="mdns-cert-name">证书名称</label>
+            <input type="text" id="mdns-cert-name" placeholder="可选，默认使用第一个域名">
+        </div>
+        <div class="form-group">
+            <label for="mdns-domains">域名（多个用逗号或换行分隔）</label>
+            <textarea id="mdns-domains" rows="3" required placeholder="example.com, *.example.com"></textarea>
+        </div>
+        <div class="form-group">
+            <label for="mdns-email">邮箱</label>
+            <input type="email" id="mdns-email" placeholder="用于 Let's Encrypt 通知">
+        </div>
+        <button type="submit" class="btn btn-primary">开始验证</button>
+        <button type="button" class="btn btn-secondary" onclick="this.closest('.form-card').style.display='none'">取消</button>
+    </form>
+</div>
+
+<table class="data-table" id="certs-table">
+    <thead>
+        <tr>
+            <th>证书 ID</th>
+            <th>名称</th>
+            <th>覆盖域名</th>
+            <th>来源</th>
+            <th>过期时间</th>
+            <th>自动续期</th>
+            <th>关联机器</th>
+            <th>操作</th>
+        </tr>
+    </thead>
+    <tbody id="certificates-tbody">
+        <tr><td colspan="8" class="empty-state">加载中...</td></tr>
+    </tbody>
+</table>
+
+<div class="pagination" id="certs-pagination"></div>
+{{end}}
+{{define "scripts"}}<script src="/static/js/certificates.js"></script>{{end}}

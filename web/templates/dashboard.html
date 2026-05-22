@@ -1,0 +1,80 @@
+{{template "layout" .}}
+{{define "title"}}仪表盘{{end}}
+{{define "page-title"}}仪表盘{{end}}
+{{define "content"}}
+<div class="stats-grid" id="stats-grid">
+    <div class="stat-card">
+        <div class="stat-label">证书总数</div>
+        <div class="stat-value" id="stat-certs-total">-</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">即将过期</div>
+        <div class="stat-value stat-warning" id="stat-certs-expiring">-</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">已过期</div>
+        <div class="stat-value stat-danger" id="stat-certs-expired">-</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">机器总数</div>
+        <div class="stat-value" id="stat-machines-total">-</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">在线机器</div>
+        <div class="stat-value stat-success" id="stat-machines-online">-</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">离线机器</div>
+        <div class="stat-value stat-danger" id="stat-machines-offline">-</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">部署失败 (24h)</div>
+        <div class="stat-value stat-danger" id="stat-deploy-failures">-</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">续签失败 (24h)</div>
+        <div class="stat-value stat-danger" id="stat-renew-failures">-</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">域名异常</div>
+        <div class="stat-value stat-warning" id="stat-domain-anomalies">-</div>
+    </div>
+</div>
+<div id="anomaly-badge" class="anomaly-badge" style="display:none;">⚠️ 存在异常需要关注</div>
+
+<div class="dashboard-sections">
+    <div class="section">
+        <h3>最近部署失败</h3>
+        <table class="data-table" id="recent-failures-table">
+            <thead>
+                <tr>
+                    <th>时间</th>
+                    <th>机器</th>
+                    <th>证书</th>
+                    <th>错误</th>
+                </tr>
+            </thead>
+            <tbody id="recent-failures-body">
+                <tr><td colspan="4" class="empty-state">加载中...</td></tr>
+            </tbody>
+        </table>
+    </div>
+    <div class="section">
+        <h3>域名异常</h3>
+        <table class="data-table" id="domain-anomalies-table">
+            <thead>
+                <tr>
+                    <th>域名</th>
+                    <th>状态</th>
+                    <th>最后检查</th>
+                    <th>问题</th>
+                </tr>
+            </thead>
+            <tbody id="domain-anomalies-body">
+                <tr><td colspan="4" class="empty-state">加载中...</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+{{end}}
+{{define "scripts"}}<script src="/static/js/dashboard.js"></script>{{end}}

@@ -1,0 +1,43 @@
+{{template "layout" .}}
+{{define "title"}}审计日志{{end}}
+{{define "page-title"}}审计日志{{end}}
+{{define "content"}}
+<div class="toolbar">
+    <div class="filter-group">
+        <select id="audit-actor-type">
+            <option value="">全部操作者</option>
+            <option value="user">用户</option>
+            <option value="agent">Agent</option>
+        </select>
+        <select id="audit-target-type">
+            <option value="">全部资源</option>
+            <option value="machine">机器</option>
+            <option value="certificate">证书</option>
+            <option value="domain">域名</option>
+            <option value="alert">告警</option>
+            <option value="user">用户</option>
+            <option value="system">系统</option>
+        </select>
+        <button class="btn btn-secondary" id="btn-filter-logs">筛选</button>
+    </div>
+</div>
+
+<table class="data-table" id="audit-table">
+    <thead>
+        <tr>
+            <th>时间</th>
+            <th>用户</th>
+            <th>操作</th>
+            <th>资源</th>
+            <th>详情</th>
+            <th>IP</th>
+        </tr>
+    </thead>
+    <tbody id="audit-body">
+        <tr><td colspan="6" class="empty-state">加载中...</td></tr>
+    </tbody>
+</table>
+
+<div class="pagination" id="audit-pagination"></div>
+{{end}}
+{{define "scripts"}}<script src="/static/js/audit-logs.js"></script>{{end}}

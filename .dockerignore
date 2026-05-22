@@ -1,0 +1,10 @@
+.git
+.gocache
+.kiro
+.vscode
+bin/
+data/
+*.exe
+*.test.exe
+codex_review.md
+requirements.md

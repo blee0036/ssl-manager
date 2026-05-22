@@ -1,0 +1,69 @@
+{{template "layout" .}}
+{{define "title"}}机器管理{{end}}
+{{define "page-title"}}机器管理{{end}}
+{{define "content"}}
+<div class="toolbar">
+    <button class="btn btn-primary" id="btn-add-machine" onclick="document.getElementById('create-machine-form').style.display='block'">添加机器</button>
+    <div class="search-box">
+        <input type="text" id="machine-search" placeholder="搜索机器名称/IP...">
+    </div>
+</div>
+
+<!-- Filter Form -->
+<form id="machine-filter-form" class="filter-form">
+    <div class="form-group-inline">
+        <select id="filter-status">
+            <option value="">全部状态</option>
+            <option value="online">在线</option>
+            <option value="offline">离线</option>
+        </select>
+        <input type="text" id="filter-search" placeholder="搜索...">
+        <button type="submit" class="btn btn-secondary btn-sm">筛选</button>
+    </div>
+</form>
+
+<!-- Create Machine Form -->
+<div id="create-machine-form" class="form-card" style="display:none;">
+    <h4>添加机器</h4>
+    <form>
+        <div class="form-group">
+            <label for="machine-name">机器名称</label>
+            <input type="text" id="machine-name" required placeholder="请输入机器名称">
+        </div>
+        <div class="form-group">
+            <label for="machine-ip">IP 地址</label>
+            <input type="text" id="machine-ip" placeholder="请输入 IP 地址">
+        </div>
+        <div class="form-group">
+            <label for="machine-tags">标签（逗号分隔）</label>
+            <input type="text" id="machine-tags" placeholder="web, production">
+        </div>
+        <div class="form-group">
+            <label for="machine-remark">备注</label>
+            <input type="text" id="machine-remark" placeholder="可选备注">
+        </div>
+        <button type="submit" class="btn btn-primary">创建</button>
+        <button type="button" class="btn btn-secondary" onclick="this.closest('.form-card').style.display='none'">取消</button>
+    </form>
+</div>
+
+<table class="data-table" id="machines-table">
+    <thead>
+        <tr>
+            <th>名称</th>
+            <th>IP 地址</th>
+            <th>状态</th>
+            <th>标签</th>
+            <th>Agent 版本</th>
+            <th>最后心跳</th>
+            <th>操作</th>
+        </tr>
+    </thead>
+    <tbody id="machines-tbody">
+        <tr><td colspan="7" class="empty-state">加载中...</td></tr>
+    </tbody>
+</table>
+
+<div class="pagination" id="machines-pagination"></div>
+{{end}}
+{{define "scripts"}}<script src="/static/js/machines.js"></script>{{end}}

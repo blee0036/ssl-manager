@@ -1,0 +1,74 @@
+{{define "layout"}}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SSL Manager - {{block "title" .}}管理面板{{end}}</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="app-container">
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <h2>SSL Manager</h2>
+            </div>
+            <nav class="sidebar-nav">
+                <a href="/dashboard" class="nav-item" data-page="dashboard">
+                    <span class="nav-icon">📊</span> 仪表盘
+                </a>
+                <a href="/certificates" class="nav-item" data-page="certificates">
+                    <span class="nav-icon">🔒</span> 证书管理
+                </a>
+                <a href="/machines" class="nav-item" data-page="machines">
+                    <span class="nav-icon">🖥️</span> 机器管理
+                </a>
+                <a href="/domains" class="nav-item" data-page="domains">
+                    <span class="nav-icon">🌐</span> 域名监控
+                </a>
+                <a href="/thirdpart-dns" class="nav-item" data-page="thirdpart-dns">
+                    <span class="nav-icon">☁️</span> 第三方 DNS
+                </a>
+                <a href="/alerts" class="nav-item" data-page="alerts">
+                    <span class="nav-icon">🔔</span> 告警管理
+                </a>
+                <a href="/audit-logs" class="nav-item" data-page="audit-logs">
+                    <span class="nav-icon">📋</span> 审计日志
+                </a>
+                <a href="/system" class="nav-item" data-page="system">
+                    <span class="nav-icon">⚙️</span> 系统配置
+                </a>
+                <a href="/users" class="nav-item admin-only" data-page="users">
+                    <span class="nav-icon">👥</span> 用户管理
+                </a>
+            </nav>
+            <div class="sidebar-footer">
+                <span id="current-user"></span>
+                <button class="btn btn-sm btn-outline" id="logout-btn">退出</button>
+            </div>
+        </aside>
+        <main class="main-content">
+            <div class="content-header">
+                <h1 id="page-title">{{block "page-title" .}}{{end}}</h1>
+            </div>
+            <div class="content-body" id="content-body">
+                {{block "content" .}}{{end}}
+            </div>
+        </main>
+    </div>
+    <div class="toast-container" id="toast-container"></div>
+    <div class="modal-overlay" id="modal-overlay" style="display:none;">
+        <div class="modal" id="modal">
+            <div class="modal-header">
+                <h3 id="modal-title"></h3>
+                <button class="modal-close" id="modal-close">&times;</button>
+            </div>
+            <div class="modal-body" id="modal-body"></div>
+            <div class="modal-footer" id="modal-footer"></div>
+        </div>
+    </div>
+    <script src="/static/js/app.js"></script>
+    {{block "scripts" .}}{{end}}
+</body>
+</html>
+{{end}}

@@ -1,0 +1,148 @@
+# Implementation Plan
+
+- [x] 1. Write bug condition exploration test
+  - **Property 1: Bug Condition** - HTML/JS DOM ID Mismatch and Field Name Errors
+  - **IMPORTANT**: Write this property-based test BEFORE implementing the fix
+  - **CRITICAL**: This test MUST FAIL on unfixed code - failure confirms the bug exists
+  - **DO NOT attempt to fix the test or the code when it fails**
+  - **NOTE**: This test encodes the expected behavior - it will validate the fix when it passes after implementation
+  - **GOAL**: Surface counterexamples that demonstrate all 5 P1 bugs exist
+  - **Scoped PBT Approach**: For each bug, scope the property to the concrete failing case(s):
+    - Bug 1: `init.html` missing IDs `init-admin-section`, `init-admin-form`, `admin-username`, `admin-password`, `init-config-section`, `init-config-form`, `cfg-*` series; `login.html` missing IDs `username`, `password`, `readonly-login-form`, `readonly-password`
+    - Bug 2: `certificates.html` missing `certificates-tbody`, `upload-cert-form`, `issue-cloudflare-form`, `manual-dns-form`; `machines.html` missing `machines-tbody`, `create-machine-form`, `machine-filter-form`
+    - Bug 3: `machines.js` does not assemble complete install command with server URL + machine ID + token
+    - Bug 4: `certificates.js` reads `ch.record_name`/`ch.record_value` instead of `ch.txt_record_name`/`ch.txt_record_value`
+    - Bug 5: `thirdpart-dns.js` has `required` on main_domains input and rejects empty submission
+  - Create test file `tests/html_js_mismatch_test.go` with property-based tests using `gopter`
+  - Test reads HTML template files from `../web/templates/` and JS files from `../web/static/js/`
+  - For each page (init, login, certificates, machines): extract `getElementById` calls from JS, verify matching `id=` attributes exist in HTML
+  - For DNS field names: verify `certificates.js` reads `txt_record_name` and `txt_record_value`
+  - For main_domains: verify `thirdpart-dns.js` does NOT have `required` on main_domains and allows empty submission
+  - For install command: verify `machines.js` assembles complete command with external URL, machine ID, and token
+  - Run test: `$env:GOOS = "windows"; $env:GOARCH = "amd64"; go test -v -run "TestBugCondition_HTMLJSMismatch" -count=1 ./tests/`
+  - **EXPECTED OUTCOME**: Test FAILS (this is correct - it proves the bugs exist)
+  - Document counterexamples found (e.g., "init.html has id='step-admin' but init.js expects 'init-admin-section'")
+  - Mark task complete when test is written, run, and failure is documented
+  - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.13, 1.14_
+
+- [x] 2. Write preservation property tests (BEFORE implementing fix)
+  - **Property 2: Preservation** - API Call Correctness and JS Logic Unchanged
+  - **IMPORTANT**: Follow observation-first methodology
+  - **IMPORTANT**: These tests verify EXISTING correct behavior that must not regress
+  - Observe on UNFIXED code:
+    - `init.js` calls `App.post('/init/admin', ...)` and `App.post('/init/config', ...)` with correct body fields
+    - `login.js` calls `App.post('/api/auth/login', {username, password})` and `App.post('/api/auth/readonly-login', {password})`
+    - `certificates.js` calls `App.get('/api/certificates/')`, `App.post('/api/certificates/', ...)`, `App.post('/api/certificates/issue/cloudflare', ...)`, `App.post('/api/certificates/issue/manual-dns/start', ...)`, `App.post('/api/certificates/issue/manual-dns/complete', ...)`
+    - `machines.js` calls `App.get('/api/machines')`, `App.post('/api/machines', {name, ip, tags, remark})`, `App.delete('/api/machines/' + id)`, `App.post('/api/machines/' + id + '/regenerate-token')`
+    - `thirdpart-dns.js` calls `App.get('/api/thirdpart-dns')`, `App.post('/api/thirdpart-dns', ...)`, `App.put('/api/thirdpart-dns/' + id, ...)`
+  - Create test file `tests/html_js_preservation_test.go` with property-based tests using `gopter`
+  - Write property: for all JS files, API endpoint URLs, HTTP methods, and request body field names are correct
+  - Write property: login flow calls correct endpoints with correct body format
+  - Write property: init flow calls correct endpoints with correct body format
+  - Write property: certificate CRUD calls correct endpoints
+  - Write property: machine CRUD calls correct endpoints
+  - Write property: thirdpart-dns CRUD calls correct endpoints
+  - Run test: `$env:GOOS = "windows"; $env:GOARCH = "amd64"; go test -v -run "TestPreservation_HTMLJSMismatch" -count=1 ./tests/`
+  - **EXPECTED OUTCOME**: Tests PASS (this confirms baseline behavior to preserve)
+  - Mark task complete when tests are written, run, and passing on unfixed code
+  - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9, 3.10, 3.11, 3.12_
+
+- [ ] 3. Fix HTML/JS mismatch across all affected files
+
+  - [x] 3.1 Fix init.html template IDs to match init.js expectations
+    - Rename `id="step-admin"` → `id="init-admin-section"`
+    - Rename `id="step-config"` → `id="init-config-section"`
+    - Rename `id="admin-form"` → `id="init-admin-form"`
+    - Rename `id="config-form"` → `id="init-config-form"`
+    - Rename `id="username"` → `id="admin-username"`
+    - Rename `id="password"` → `id="admin-password"`
+    - Add all config fields: `cfg-external-url`, `cfg-listen-addr`, `cfg-heartbeat-timeout`, `cfg-poll-interval`, `cfg-alert-days`, `cfg-certbot-path`, `cfg-certbot-datadir`, `cfg-certbot-email`, `cfg-readonly-enabled`, `cfg-readonly-password`, `cfg-monitor-port`, `cfg-monitor-interval`
+    - Remove fields not needed by JS: `password-confirm`, `domain-check-interval`, `cert-renew-days`
+    - Update `for` attributes on labels to match new IDs
+    - _Bug_Condition: isBugCondition({page:"init", action:"bind_form"}) where getElementById returns null for expected IDs_
+    - _Expected_Behavior: All getElementById calls in init.js return non-null elements_
+    - _Preservation: init.js API call logic (POST /init/admin, POST /init/config) unchanged_
+    - _Requirements: 2.1, 2.2, 3.1_
+
+  - [x] 3.2 Fix login.html template IDs to match login.js expectations
+    - Rename `id="login-username"` → `id="username"`
+    - Rename `id="login-password"` → `id="password"`
+    - Rename `id="readonly-form"` → `id="readonly-login-form"`
+    - Rename `id="readonly-pwd"` → `id="readonly-password"`
+    - Update `for` attributes on labels to match new IDs
+    - _Bug_Condition: isBugCondition({page:"login", action:"bind_form"}) where getElementById returns null_
+    - _Expected_Behavior: login.js can read username/password values and bind readonly form_
+    - _Preservation: login.js API call logic (POST /api/auth/login, POST /api/auth/readonly-login) unchanged_
+    - _Requirements: 2.3, 2.4, 3.2, 3.3_
+
+  - [x] 3.3 Fix certificates.html template to match certificates.js expectations
+    - Rename `id="certs-body"` → `id="certificates-tbody"`
+    - Add upload certificate form with `id="upload-cert-form"` containing inputs: `cert-name`, `cert-file`, `key-file`, `chain-file`, `cert-auto-renew`
+    - Add Cloudflare issue form with `id="issue-cloudflare-form"` containing inputs: `cf-cert-name`, `cf-domains`, `cf-dns-id`, `cf-auto-renew`
+    - Add manual DNS form with `id="manual-dns-form"` containing inputs: `mdns-cert-name`, `mdns-domains`, `mdns-email`
+    - Update toolbar buttons to show/hide appropriate forms
+    - Update table headers to match `renderCertificateList()` output
+    - _Bug_Condition: isBugCondition({page:"certificates", action:"render_list"}) and isBugCondition({page:"certificates", action:"bind_forms"})_
+    - _Expected_Behavior: certificates.js can render list into tbody and bind all form events_
+    - _Preservation: certificates.js API call logic unchanged_
+    - _Requirements: 2.5, 2.6, 3.4, 3.5, 3.6, 3.7_
+
+  - [x] 3.4 Fix machines.html template to match machines.js expectations
+    - Rename `id="machines-body"` → `id="machines-tbody"`
+    - Add create machine form with `id="create-machine-form"` containing inputs: `machine-name`, `machine-ip`, `machine-tags`, `machine-remark`
+    - Add filter form with `id="machine-filter-form"` containing inputs: `filter-status`, `filter-search`
+    - Update toolbar button to show create form
+    - Update table headers to match `renderMachineList()` output (name, ip, status, tags, agent_version, last_heartbeat_at, actions)
+    - _Bug_Condition: isBugCondition({page:"machines", action:"render_list"}) and isBugCondition({page:"machines", action:"bind_forms"})_
+    - _Expected_Behavior: machines.js can render list into tbody and bind all form events_
+    - _Preservation: machines.js API call logic unchanged_
+    - _Requirements: 2.7, 2.8, 3.8, 3.9_
+
+  - [x] 3.5 Fix machines.js to display complete install command
+    - In `createMachine()`: after successful POST, assemble complete install command using `data.machine.id` + `data.agent_token` + server external URL (from `cfg-external-url` or `window.location.origin`)
+    - In `regenerateToken()`: after successful token regeneration, display complete install command with machine ID and new token
+    - Display format: copy-ready command with server URL, machine ID, and actual token embedded
+    - _Bug_Condition: isBugCondition({page:"machines", action:"show_install_command"}) where displayed_command contains placeholder or is raw token only_
+    - _Expected_Behavior: Complete install command with server URL + machine ID + token displayed_
+    - _Preservation: POST /api/machines and POST /api/machines/{id}/regenerate-token call logic unchanged_
+    - _Requirements: 2.9, 2.10, 3.9_
+
+  - [x] 3.6 Fix certificates.js DNS challenge field names
+    - In `showManualDNSChallenges()`: change `ch.record_name` → `ch.txt_record_name`
+    - In `showManualDNSChallenges()`: change `ch.record_value` → `ch.txt_record_value`
+    - _Bug_Condition: isBugCondition({page:"certificates", action:"show_dns_challenges"}) where read_field is "record_name" or "record_value"_
+    - _Expected_Behavior: Frontend reads txt_record_name and txt_record_value from backend response_
+    - _Preservation: POST /api/certificates/issue/manual-dns/start and /complete call logic unchanged_
+    - _Requirements: 2.13, 3.7_
+
+  - [x] 3.7 Fix thirdpart-dns.js to allow empty main_domains
+    - Remove `required` attribute from `dns-main-domains` input in `showAddModal()` and `showEditModal()`
+    - In `submitDNS()`: change validation from `if (!name || !mainDomainsStr)` to `if (!name)`
+    - Handle empty `mainDomainsStr`: when empty, send `main_domains: []` to backend
+    - _Bug_Condition: isBugCondition({page:"thirdpart-dns", action:"submit_config"}) where required attribute blocks empty submission_
+    - _Expected_Behavior: Empty main_domains allowed, sends main_domains:[] to backend_
+    - _Preservation: Non-empty main_domains still split and sent as array; all other thirdpart-dns API calls unchanged_
+    - _Requirements: 2.14, 3.10_
+
+  - [x] 3.8 Verify bug condition exploration test now passes
+    - **Property 1: Expected Behavior** - HTML/JS DOM ID Alignment Verified
+    - **IMPORTANT**: Re-run the SAME test from task 1 - do NOT write a new test
+    - The test from task 1 encodes the expected behavior
+    - When this test passes, it confirms all 5 P1 bugs are fixed
+    - Run: `$env:GOOS = "windows"; $env:GOARCH = "amd64"; go test -v -run "TestBugCondition_HTMLJSMismatch" -count=1 ./tests/`
+    - **EXPECTED OUTCOME**: Test PASSES (confirms bugs are fixed)
+    - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 2.13, 2.14_
+
+  - [x] 3.9 Verify preservation tests still pass
+    - **Property 2: Preservation** - API Call Correctness Unchanged
+    - **IMPORTANT**: Re-run the SAME tests from task 2 - do NOT write new tests
+    - Run: `$env:GOOS = "windows"; $env:GOARCH = "amd64"; go test -v -run "TestPreservation_HTMLJSMismatch" -count=1 ./tests/`
+    - **EXPECTED OUTCOME**: Tests PASS (confirms no regressions)
+    - Confirm all API call URLs, methods, and body fields are unchanged after fix
+    - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9, 3.10, 3.11, 3.12_
+
+- [x] 4. Checkpoint - Ensure all tests pass
+  - Run full test suite: `$env:GOOS = "windows"; $env:GOARCH = "amd64"; go test -v -run "TestBugCondition_HTMLJSMismatch|TestPreservation_HTMLJSMismatch" -count=1 ./tests/`
+  - Verify all bug condition tests PASS (bugs are fixed)
+  - Verify all preservation tests PASS (no regressions)
+  - Ensure all tests pass, ask the user if questions arise.

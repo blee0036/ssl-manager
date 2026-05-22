@@ -1,0 +1,315 @@
+package handler
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"testing"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/ssl-manager/ssl-manager/internal/config"
+	"github.com/ssl-manager/ssl-manager/internal/database"
+	"github.com/ssl-manager/ssl-manager/internal/model"
+	"github.com/ssl-manager/ssl-manager/internal/web/repository"
+	"github.com/ssl-manager/ssl-manager/internal/web/service"
+)
+
+func setupInitHandler(t *testing.T) (*InitHandler, *service.InitService) {
+	t.Helper()
+
+	tmpDir := t.TempDir()
+	db, err := database.NewDB(tmpDir)
+	if err != nil {
+		t.Fatalf("failed to create test db: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	userRepo := repository.NewUserRepository(db.DB)
+	configPath := filepath.Join(tmpDir, "config.json")
+	initSvc := service.NewInitService(db, userRepo, configPath, nil)
+	handler := NewInitHandler(initSvc)
+
+	return handler, initSvc
+}
+
+func TestInitHandler_GetStatus_NeedsInit(t *testing.T) {
+	handler, _ := setupInitHandler(t)
+
+	r := chi.NewRouter()
+	handler.RegisterRoutes(r)
+
+	req := httptest.NewRequest(http.MethodGet, "/init/status", nil)
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", w.Code)
+	}
+
+	var resp model.SuccessResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if resp.Code != http.StatusOK {
+		t.Errorf("expected response code 200, got %d", resp.Code)
+	}
+}
+
+func TestInitHandler_GetStatus_AlreadyInitialized(t *testing.T) {
+	handler, initSvc := setupInitHandler(t)
+
+	// Create admin first
+	_, err := initSvc.CreateAdmin(context.Background(), service.CreateAdminInput{
+		Username: "admin",
+		Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("failed to create admin: %v", err)
+	}
+
+	// Save config to complete full initialization
+	serverCfg := &config.ServerConfig{ExternalURL: "https://test.example.com"}
+	_, err = initSvc.SaveConfig(context.Background(), service.SaveConfigInput{Server: serverCfg})
+	if err != nil {
+		t.Fatalf("failed to save config: %v", err)
+	}
+
+	r := chi.NewRouter()
+	handler.RegisterRoutes(r)
+
+	req := httptest.NewRequest(http.MethodGet, "/init/status", nil)
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected status 403, got %d", w.Code)
+	}
+}
+
+func TestInitHandler_CreateAdmin_Success(t *testing.T) {
+	handler, _ := setupInitHandler(t)
+
+	r := chi.NewRouter()
+	handler.RegisterRoutes(r)
+
+	body := map[string]string{
+		"username": "admin",
+		"password": "securepass123",
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest(http.MethodPost, "/init/admin", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Errorf("expected status 201, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	var resp model.SuccessResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if resp.Message != "admin user created" {
+		t.Errorf("expected message 'admin user created', got '%s'", resp.Message)
+	}
+}
+
+func TestInitHandler_CreateAdmin_AlreadyInitialized(t *testing.T) {
+	handler, initSvc := setupInitHandler(t)
+
+	// Create admin first
+	_, err := initSvc.CreateAdmin(context.Background(), service.CreateAdminInput{
+		Username: "admin",
+		Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("failed to create admin: %v", err)
+	}
+
+	r := chi.NewRouter()
+	handler.RegisterRoutes(r)
+
+	body := map[string]string{
+		"username": "admin2",
+		"password": "password456",
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest(http.MethodPost, "/init/admin", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected status 403, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestInitHandler_SaveConfig_Success(t *testing.T) {
+	handler, initSvc := setupInitHandler(t)
+
+	// Create admin first (required before saving config)
+	_, err := initSvc.CreateAdmin(context.Background(), service.CreateAdminInput{
+		Username: "admin",
+		Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("failed to create admin: %v", err)
+	}
+
+	r := chi.NewRouter()
+	handler.RegisterRoutes(r)
+
+	body := map[string]interface{}{
+		"server": map[string]string{
+			"external_url": "https://ssl.example.com",
+			"listen_addr":  ":9090",
+		},
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest(http.MethodPost, "/init/config", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestInitHandler_SaveConfig_BeforeAdmin(t *testing.T) {
+	handler, _ := setupInitHandler(t)
+
+	r := chi.NewRouter()
+	handler.RegisterRoutes(r)
+
+	body := map[string]interface{}{
+		"server": map[string]string{
+			"external_url": "https://ssl.example.com",
+		},
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest(http.MethodPost, "/init/config", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status 400, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestInitHandler_AllEndpoints_Return403_AfterFullInit verifies that after the system
+// is fully initialized (admin created), all /init endpoints return 403.
+// This validates Requirement 1.3: WHEN 初始化完成后用户访问 /init THEN 返回 403.
+func TestInitHandler_AllEndpoints_Return403_AfterFullInit(t *testing.T) {
+	handler, initSvc := setupInitHandler(t)
+
+	// Complete initialization: create admin
+	_, err := initSvc.CreateAdmin(context.Background(), service.CreateAdminInput{
+		Username: "admin",
+		Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("failed to create admin: %v", err)
+	}
+
+	// Save config to complete full initialization
+	serverCfg := &config.ServerConfig{ExternalURL: "https://test.example.com"}
+	_, err = initSvc.SaveConfig(context.Background(), service.SaveConfigInput{Server: serverCfg})
+	if err != nil {
+		t.Fatalf("failed to save config: %v", err)
+	}
+
+	r := chi.NewRouter()
+	handler.RegisterRoutes(r)
+
+	// Test GET /init/status returns 403
+	t.Run("GET /init/status returns 403", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/init/status", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusForbidden {
+			t.Errorf("expected status 403, got %d; body: %s", w.Code, w.Body.String())
+		}
+	})
+
+	// Test POST /init/admin returns 403
+	t.Run("POST /init/admin returns 403", func(t *testing.T) {
+		body := map[string]string{
+			"username": "hacker",
+			"password": "password456",
+		}
+		bodyBytes, _ := json.Marshal(body)
+
+		req := httptest.NewRequest(http.MethodPost, "/init/admin", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusForbidden {
+			t.Errorf("expected status 403, got %d; body: %s", w.Code, w.Body.String())
+		}
+	})
+}
+
+// TestInitHandler_CreateAdmin_InvalidJSON tests that invalid JSON body returns 400.
+func TestInitHandler_CreateAdmin_InvalidJSON(t *testing.T) {
+	handler, _ := setupInitHandler(t)
+
+	r := chi.NewRouter()
+	handler.RegisterRoutes(r)
+
+	req := httptest.NewRequest(http.MethodPost, "/init/admin", bytes.NewReader([]byte("invalid json")))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status 400, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestInitHandler_SaveConfig_InvalidJSON tests that invalid JSON body returns 400.
+func TestInitHandler_SaveConfig_InvalidJSON(t *testing.T) {
+	handler, initSvc := setupInitHandler(t)
+
+	// Create admin first
+	_, err := initSvc.CreateAdmin(context.Background(), service.CreateAdminInput{
+		Username: "admin",
+		Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("failed to create admin: %v", err)
+	}
+
+	r := chi.NewRouter()
+	handler.RegisterRoutes(r)
+
+	req := httptest.NewRequest(http.MethodPost, "/init/config", bytes.NewReader([]byte("invalid json")))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status 400, got %d; body: %s", w.Code, w.Body.String())
+	}
+}

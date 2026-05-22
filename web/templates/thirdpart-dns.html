@@ -1,0 +1,24 @@
+{{template "layout" .}}
+{{define "title"}}第三方 DNS{{end}}
+{{define "page-title"}}第三方 DNS{{end}}
+{{define "content"}}
+<div class="toolbar">
+    <button class="btn btn-primary" id="btn-add-dns">添加 DNS 配置</button>
+</div>
+
+<table class="data-table" id="dns-table">
+    <thead>
+        <tr>
+            <th>名称</th>
+            <th>提供商</th>
+            <th>域名</th>
+            <th>状态</th>
+            <th>操作</th>
+        </tr>
+    </thead>
+    <tbody id="dns-body">
+        <tr><td colspan="5" class="empty-state">加载中...</td></tr>
+    </tbody>
+</table>
+{{end}}
+{{define "scripts"}}<script src="/static/js/thirdpart-dns.js"></script>{{end}}

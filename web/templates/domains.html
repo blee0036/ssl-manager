@@ -1,0 +1,31 @@
+{{template "layout" .}}
+{{define "title"}}域名监控{{end}}
+{{define "page-title"}}域名监控{{end}}
+{{define "content"}}
+<div class="toolbar">
+    <button class="btn btn-primary" id="btn-add-domain">添加域名</button>
+    <div class="search-box">
+        <input type="text" id="domain-search" placeholder="搜索域名...">
+    </div>
+</div>
+
+<table class="data-table" id="domains-table">
+    <thead>
+        <tr>
+            <th>域名</th>
+            <th>端口</th>
+            <th>TLS 状态</th>
+            <th>证书匹配</th>
+            <th>到期时间</th>
+            <th>最后检查</th>
+            <th>操作</th>
+        </tr>
+    </thead>
+    <tbody id="domains-body">
+        <tr><td colspan="7" class="empty-state">加载中...</td></tr>
+    </tbody>
+</table>
+
+<div class="pagination" id="domains-pagination"></div>
+{{end}}
+{{define "scripts"}}<script src="/static/js/domains.js"></script>{{end}}

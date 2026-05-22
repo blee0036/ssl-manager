@@ -1,0 +1,33 @@
+# Binaries
+bin/
+*.exe
+*.test.exe
+*.test
+
+# Runtime data
+data/
+
+# Go cache
+.gocache/
+.cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test artifacts
+coverage.out
+
+# Build artifacts
+agent.exe
+web.exe
+worker.test.exe
+
+# Review file (generated per-session)
+codex_review.md

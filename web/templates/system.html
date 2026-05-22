@@ -1,0 +1,89 @@
+{{template "layout" .}}
+{{define "title"}}系统配置{{end}}
+{{define "page-title"}}系统配置{{end}}
+{{define "content"}}
+<div class="config-form-container">
+    <form id="system-config-form">
+        <div class="form-section">
+            <h3>服务器配置</h3>
+            <div class="form-group">
+                <label for="cfg-external-url">外部访问地址</label>
+                <input type="text" id="cfg-external-url" name="external_url" placeholder="http://localhost:8080">
+            </div>
+            <div class="form-group">
+                <label for="cfg-listen-addr">监听地址</label>
+                <input type="text" id="cfg-listen-addr" name="listen_addr" placeholder=":8080">
+            </div>
+        </div>
+
+        <div class="form-section">
+            <h3>Agent 配置</h3>
+            <div class="form-group">
+                <label for="cfg-heartbeat-timeout">心跳超时（秒）</label>
+                <input type="number" id="cfg-heartbeat-timeout" name="heartbeat_timeout_seconds" min="30">
+            </div>
+            <div class="form-group">
+                <label for="cfg-poll-interval">轮询间隔（秒）</label>
+                <input type="number" id="cfg-poll-interval" name="poll_interval_seconds" min="5">
+            </div>
+        </div>
+
+        <div class="form-section">
+            <h3>告警配置</h3>
+            <div class="form-group">
+                <label for="cfg-alert-days">证书到期提醒天数</label>
+                <input type="number" id="cfg-alert-days" name="default_before_days" min="1">
+            </div>
+        </div>
+
+        <div class="form-section">
+            <h3>Certbot 配置</h3>
+            <div class="form-group">
+                <label for="cfg-certbot-binary">Certbot 路径</label>
+                <input type="text" id="cfg-certbot-binary" name="certbot_binary_path" placeholder="certbot">
+            </div>
+            <div class="form-group">
+                <label for="cfg-certbot-datadir">Certbot 数据目录</label>
+                <input type="text" id="cfg-certbot-datadir" name="certbot_data_dir" placeholder="可选">
+            </div>
+            <div class="form-group">
+                <label for="cfg-certbot-email">Certbot 邮箱</label>
+                <input type="email" id="cfg-certbot-email" name="certbot_email">
+            </div>
+        </div>
+
+        <div class="form-section">
+            <h3>只读访问</h3>
+            <div class="form-group">
+                <label for="cfg-readonly-enabled">启用只读模式</label>
+                <select id="cfg-readonly-enabled">
+                    <option value="false">禁用</option>
+                    <option value="true">启用</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="cfg-readonly-pwd">只读密码</label>
+                <input type="password" id="cfg-readonly-pwd" name="readonly_password" placeholder="留空则不修改">
+            </div>
+        </div>
+
+        <div class="form-section">
+            <h3>域名监控</h3>
+            <div class="form-group">
+                <label for="cfg-domain-port">默认监控端口</label>
+                <input type="number" id="cfg-domain-port" name="domain_default_port" min="1" max="65535">
+            </div>
+            <div class="form-group">
+                <label for="cfg-domain-interval">检查间隔（分钟）</label>
+                <input type="number" id="cfg-domain-interval" name="domain_interval_minutes" min="5">
+            </div>
+        </div>
+
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary">保存配置</button>
+            <button type="button" class="btn btn-secondary" id="btn-reload-config">重新加载</button>
+        </div>
+    </form>
+</div>
+{{end}}
+{{define "scripts"}}<script src="/static/js/system.js"></script>{{end}}

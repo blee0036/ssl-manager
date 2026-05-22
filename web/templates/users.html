@@ -1,0 +1,24 @@
+{{template "layout" .}}
+{{define "title"}}用户管理{{end}}
+{{define "page-title"}}用户管理{{end}}
+{{define "content"}}
+<div class="toolbar">
+    <button class="btn btn-primary" id="btn-add-user">添加用户</button>
+</div>
+
+<table class="data-table" id="users-table">
+    <thead>
+        <tr>
+            <th>用户名</th>
+            <th>角色</th>
+            <th>状态</th>
+            <th>创建时间</th>
+            <th>操作</th>
+        </tr>
+    </thead>
+    <tbody id="users-body">
+        <tr><td colspan="5" class="empty-state">加载中...</td></tr>
+    </tbody>
+</table>
+{{end}}
+{{define "scripts"}}<script src="/static/js/users.js"></script>{{end}}
