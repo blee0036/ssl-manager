@@ -12,7 +12,7 @@ import (
 
 // WebUIHandler serves the web management frontend.
 type WebUIHandler struct {
-	templates *template.Template
+	templates map[string]*template.Template
 	staticFS  embed.FS
 }
 
@@ -20,11 +20,55 @@ type WebUIHandler struct {
 // templatesFS should contain files at "templates/*.html".
 // staticFS should contain files at "static/css/..." and "static/js/...".
 func NewWebUIHandler(templatesFS embed.FS, staticFS embed.FS) (*WebUIHandler, error) {
-	tmpl, err := template.ParseFS(templatesFS, "templates/*.html")
+	// Parse layout template
+	layoutContent, err := fs.ReadFile(templatesFS, "templates/layout.html")
 	if err != nil {
 		return nil, err
 	}
-	return &WebUIHandler{templates: tmpl, staticFS: staticFS}, nil
+
+	// Get all page template files
+	entries, err := fs.ReadDir(templatesFS, "templates")
+	if err != nil {
+		return nil, err
+	}
+
+	templates := make(map[string]*template.Template)
+	for _, entry := range entries {
+		name := entry.Name()
+		if name == "layout.html" || entry.IsDir() {
+			continue
+		}
+
+		pageContent, err := fs.ReadFile(templatesFS, "templates/"+name)
+		if err != nil {
+			return nil, err
+		}
+
+		// Standalone pages (login, init) don't use the layout
+		if name == "login.html" || name == "init.html" {
+			tmpl, err := template.New(name).Parse(string(pageContent))
+			if err != nil {
+				return nil, err
+			}
+			templates[name] = tmpl
+			continue
+		}
+
+		// Pages that use the layout: parse layout first, then the page
+		tmpl, err := template.New("layout").Parse(string(layoutContent))
+		if err != nil {
+			return nil, err
+		}
+
+		_, err = tmpl.New(name).Parse(string(pageContent))
+		if err != nil {
+			return nil, err
+		}
+
+		templates[name] = tmpl
+	}
+
+	return &WebUIHandler{templates: templates, staticFS: staticFS}, nil
 }
 
 // RegisterRoutes registers the web UI routes on the given router.
@@ -55,8 +99,23 @@ func (h *WebUIHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 func (h *WebUIHandler) renderPage(name string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		tmpl, ok := h.templates[name]
+		if !ok {
+			http.Error(w, "Page not found", http.StatusNotFound)
+			return
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := h.templates.ExecuteTemplate(w, name, nil); err != nil {
+
+		// Pages that use the layout template are executed via "layout" block.
+		// Standalone pages (login, init) are executed directly by their filename.
+		var err error
+		if tmpl.Lookup("layout") != nil && name != "login.html" && name != "init.html" {
+			err = tmpl.ExecuteTemplate(w, "layout", nil)
+		} else {
+			err = tmpl.Execute(w, nil)
+		}
+
+		if err != nil {
 			if strings.Contains(err.Error(), "is undefined") {
 				http.Error(w, "Page not found", http.StatusNotFound)
 				return
