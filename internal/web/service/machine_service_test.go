@@ -378,8 +378,8 @@ func TestGetInstallCommand_Success(t *testing.T) {
 	if !strings.Contains(cmd, token) {
 		t.Error("install command should contain agent token")
 	}
-	if !strings.Contains(cmd, "curl -sSL") {
-		t.Error("install command should start with curl")
+	if !strings.Contains(cmd, "curl -fsSL") {
+		t.Error("install command should start with curl -fsSL")
 	}
 	if !strings.Contains(cmd, "/api/agent/install.sh") {
 		t.Error("install command should reference install.sh endpoint")

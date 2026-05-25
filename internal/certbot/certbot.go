@@ -474,9 +474,12 @@ func (w *CertbotWrapper) buildCertbotArgs(domains []string, email string) []stri
 	args = append(args, "--agree-tos")
 	args = append(args, "--non-interactive")
 
-	// Use custom config-dir if specified
+	// Use custom config-dir if specified, along with work-dir and logs-dir
+	// to ensure all certbot directories are writable (important for non-root Docker)
 	if cfg.DataDir != "" {
 		args = append(args, "--config-dir", cfg.DataDir)
+		args = append(args, "--work-dir", filepath.Join(cfg.DataDir, "work"))
+		args = append(args, "--logs-dir", filepath.Join(cfg.DataDir, "logs"))
 	}
 
 	return args

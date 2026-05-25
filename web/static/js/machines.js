@@ -44,7 +44,7 @@ function renderMachineList(machines) {
             <td>
                 <button class="btn btn-sm btn-info" onclick="viewMachine('${m.id}')">详情</button>
                 <button class="btn btn-sm btn-warning" onclick="showMachineCerts('${m.id}')">部署配置</button>
-                <button class="btn btn-sm btn-danger" onclick="deleteMachine('${m.id}')">删除</button>
+                ${App._currentRole !== 'readonly' ? `<button class="btn btn-sm btn-danger" onclick="deleteMachine('${m.id}')">删除</button>` : ''}
             </td>
         </tr>`;
     }).join('');
@@ -94,7 +94,7 @@ async function createMachine() {
         const serverUrl = window.location.origin;
         const machineId = data.machine ? data.machine.id : (data.id || '');
         const token = data.agent_token || '';
-        const installCmd = `curl -sSL ${serverUrl}/api/agent/install.sh | bash -s -- --server-url ${serverUrl} --machine-id ${machineId} --agent-token ${token}`;
+        const installCmd = `curl -fsSL ${serverUrl}/api/agent/install.sh | bash -s -- --server-url ${serverUrl} --machine-id ${machineId} --agent-token ${token}`;
         const html = `
             <p>机器创建成功！</p>
             <p><strong>安装命令（仅显示一次）：</strong></p>
@@ -130,11 +130,11 @@ async function viewMachine(id) {
                 <tr><th>更新时间</th><td>${App.formatDate(m.updated_at)}</td></tr>
             </table>
         `;
-        const footer = `
+        const footer = App._currentRole !== 'readonly' ? `
             <button class="btn btn-warning" onclick="regenerateToken('${m.id}')">重新生成Token</button>
             <button class="btn btn-secondary" onclick="revokeToken('${m.id}')">吊销Token</button>
             <button class="btn btn-info" onclick="getInstallCommand('${m.id}')">安装命令</button>
-        `;
+        ` : '';
         App.showModal('机器详情 - ' + m.name, html, footer);
     } catch (err) {
         App.toast('获取机器详情失败: ' + err.message, 'error');
@@ -161,7 +161,7 @@ async function regenerateToken(id) {
         const data = resp.data;
         const serverUrl = window.location.origin;
         const token = data.agent_token || '';
-        const installCmd = `curl -sSL ${serverUrl}/api/agent/install.sh | bash -s -- --server-url ${serverUrl} --machine-id ${id} --agent-token ${token}`;
+        const installCmd = `curl -fsSL ${serverUrl}/api/agent/install.sh | bash -s -- --server-url ${serverUrl} --machine-id ${id} --agent-token ${token}`;
         const html = `
             <p><strong>新的安装命令（仅显示一次）：</strong></p>
             <pre style="word-break:break-all;background:#f5f5f5;padding:12px;border-radius:4px;">${App.escapeHtml(installCmd)}</pre>
@@ -194,7 +194,7 @@ async function getInstallCommand(id) {
         const data = resp.data;
         const serverUrl = window.location.origin;
         const token = data.agent_token || '';
-        const installCmd = `curl -sSL ${serverUrl}/api/agent/install.sh | bash -s -- --server-url ${serverUrl} --machine-id ${id} --agent-token ${token}`;
+        const installCmd = `curl -fsSL ${serverUrl}/api/agent/install.sh | bash -s -- --server-url ${serverUrl} --machine-id ${id} --agent-token ${token}`;
         const html = `
             <p><strong>安装命令（Token 已重新生成，仅显示一次）：</strong></p>
             <pre style="word-break:break-all;background:#f5f5f5;padding:12px;border-radius:4px;">${App.escapeHtml(installCmd)}</pre>
@@ -230,15 +230,17 @@ function renderMachineCerts(machineId, configs) {
                 <td>${App.escapeHtml(mc.private_key_path)}</td>
                 <td>${App.escapeHtml(mc.last_deploy_status)}</td>
                 <td>
-                    <button class="btn btn-sm btn-primary" onclick="triggerDeploy('${machineId}','${mc.id}')">部署</button>
+                    ${App._currentRole !== 'readonly' ? `<button class="btn btn-sm btn-primary" onclick="triggerDeploy('${machineId}','${mc.id}')">部署</button>` : ''}
                     <button class="btn btn-sm btn-info" onclick="viewDeployLogs('${machineId}','${mc.id}')">日志</button>
-                    <button class="btn btn-sm btn-danger" onclick="deleteMachineCert('${machineId}','${mc.id}')">删除</button>
+                    ${App._currentRole !== 'readonly' ? `<button class="btn btn-sm btn-danger" onclick="deleteMachineCert('${machineId}','${mc.id}')">删除</button>` : ''}
                 </td>
             </tr>`;
         });
     }
     html += '</tbody></table>';
-    html += `<button class="btn btn-success" onclick="showAddMachineCertForm('${machineId}')">添加部署配置</button>`;
+    if (App._currentRole !== 'readonly') {
+        html += `<button class="btn btn-success" onclick="showAddMachineCertForm('${machineId}')">添加部署配置</button>`;
+    }
 
     App.showModal('部署配置', html, '');
 }

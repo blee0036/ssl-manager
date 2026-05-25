@@ -114,6 +114,15 @@ a:hover { text-decoration: underline; }
 .btn-sm { padding: 0.3rem 0.6rem; font-size: 0.75rem; }
 .btn-block { width: 100%; justify-content: center; }
 
+/* Readonly mode: hide write-action buttons in table rows */
+.readonly-mode .data-table .btn-danger,
+.readonly-mode .data-table .btn-primary { display: none; }
+.readonly-mode .data-table .btn-secondary[onclick*="edit"],
+.readonly-mode .data-table .btn-secondary[onclick*="reset"],
+.readonly-mode .data-table .btn-secondary[onclick*="submit"],
+.readonly-mode .data-table .btn-secondary[onclick*="test"],
+.readonly-mode .data-table .btn-secondary[onclick*="sync"] { display: none; }
+
 /* === Tables === */
 .data-table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
 .data-table th { background: #f8fafc; padding: 0.7rem 0.75rem; text-align: left; font-weight: 600; color: #475569; font-size: 0.8rem; text-transform: uppercase; border-bottom: 2px solid #e5e7eb; }

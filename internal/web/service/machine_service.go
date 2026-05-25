@@ -192,7 +192,7 @@ func (s *MachineService) GetInstallCommand(ctx context.Context, machineID string
 	externalURL := s.runtimeCfg.Get().Server.ExternalURL
 
 	cmd := fmt.Sprintf(
-		"curl -sSL %s/api/agent/install.sh | bash -s -- --server-url %s --machine-id %s --agent-token %s",
+		"curl -fsSL %s/api/agent/install.sh | bash -s -- --server-url %s --machine-id %s --agent-token %s",
 		externalURL, externalURL, machineID, token,
 	)
 

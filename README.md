@@ -79,7 +79,7 @@ docker buildx build \
 在 Web 界面创建机器后，复制生成的安装命令到目标机器（Linux 或 macOS）执行。命令形式如下：
 
 ```bash
-curl -sSL http://<server>/api/agent/install.sh | bash -s -- \
+curl -fsSL http://<server>/api/agent/install.sh | bash -s -- \
   --server-url http://<server> \
   --machine-id <machine_id> \
   --agent-token <token>
@@ -391,7 +391,7 @@ heartbeat_timeout_seconds >= poll_interval_seconds * 2
 | 字段 | 默认值 | 影响 |
 |------|--------|------|
 | `binary_path` | `certbot` | Web Backend 调用的 Certbot 可执行文件路径。 |
-| `data_dir` | 空 | Certbot 的 `--config-dir`。为空时使用 Certbot 默认目录 `/etc/letsencrypt`。 |
+| `data_dir` | `./data/certbot` | Certbot 的 `--config-dir`、`--work-dir`、`--logs-dir` 基础目录。Docker 环境下默认指向 `/app/data/certbot`，确保非 root 用户可写。 |
 | `email` | 空 | Let's Encrypt 注册和签发使用的邮箱。使用 Certbot 签发时应配置。 |
 
 使用 Cloudflare DNS-01 签发时，运行环境需要满足：

@@ -21,6 +21,14 @@ const App = {
         const resp = await fetch(url, opts);
         const json = await resp.json();
         if (!resp.ok) {
+            // Auto-redirect to login on 401 for protected APIs only.
+            // Don't redirect for login/init endpoints — those return 401 as normal business errors.
+            if (resp.status === 401 && !url.startsWith('/api/auth/') && !url.startsWith('/init')) {
+                localStorage.removeItem('token');
+                window.location.href = '/login';
+                // Return a never-resolving promise to prevent callers from continuing
+                return new Promise(() => {});
+            }
             const err = new Error(json.message || 'Request failed');
             err.code = json.code || resp.status;
             err.detail = json.detail || '';
@@ -233,7 +241,57 @@ const App = {
     }
 };
 
-// Initialize tab controller on DOM ready
+// Initialize on DOM ready
 document.addEventListener('DOMContentLoaded', () => {
     App.initTabs();
+
+    // Bind logout button
+    const logoutBtn = document.getElementById('logout-btn');
+    if (logoutBtn) {
+        logoutBtn.addEventListener('click', () => App.logout());
+    }
+
+    // Role-based UI adjustments
+    const token = localStorage.getItem('token');
+    if (token) {
+        try {
+            // Decode JWT payload (base64url) to get role
+            const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+            const role = payload.role || '';
+
+            // Store role globally for page-level checks
+            App._currentRole = role;
+
+            if (role !== 'admin') {
+                document.querySelectorAll('.admin-only').forEach(el => {
+                    el.style.display = 'none';
+                });
+            }
+
+            // Readonly users: hide all write-action buttons and nav items they can't access
+            if (role === 'readonly') {
+                // Hide toolbar buttons (add, sync, etc.) — these are write operations
+                document.querySelectorAll('.toolbar .btn-primary, .toolbar .btn-secondary').forEach(el => {
+                    el.style.display = 'none';
+                });
+                // Hide nav items for pages readonly can't access at all
+                document.querySelectorAll('.nav-item[data-page="system"]').forEach(el => {
+                    el.style.display = 'none';
+                });
+                document.querySelectorAll('.nav-item[data-page="thirdpart-dns"]').forEach(el => {
+                    el.style.display = 'none';
+                });
+                // Add a body class so page-specific JS can check
+                document.body.classList.add('readonly-mode');
+            }
+
+            // Display current username in sidebar
+            const userEl = document.getElementById('current-user');
+            if (userEl && payload.username) {
+                userEl.textContent = payload.username + (role === 'readonly' ? ' (只读)' : '');
+            }
+        } catch (e) {
+            // If token can't be decoded, ignore — auth will fail on API call
+        }
+    }
 });

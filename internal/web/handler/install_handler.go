@@ -341,7 +341,7 @@ manual_instructions() {
     echo "To run the agent manually, follow these steps:"
     echo ""
     echo "1. Download the agent binary:"
-    echo "   curl -sSL ${SERVER_URL}/api/agent/binary?os=${AGENT_OS}\\&arch=${AGENT_ARCH} -o ${INSTALL_DIR}/ssl-manager-agent"
+    echo "   curl -fsSL ${SERVER_URL}/api/agent/binary?os=${AGENT_OS}\\&arch=${AGENT_ARCH} -o ${INSTALL_DIR}/ssl-manager-agent"
     echo "   chmod +x ${INSTALL_DIR}/ssl-manager-agent"
     echo ""
     echo "2. Create the config directory:"
@@ -368,7 +368,12 @@ echo "    Platform: ${AGENT_OS}/${AGENT_ARCH}"
 
 # Step 1: Download agent binary
 echo "==> Downloading agent binary..."
-curl -sSL "${SERVER_URL}/api/agent/binary?os=${AGENT_OS}&arch=${AGENT_ARCH}" -o "${INSTALL_DIR}/ssl-manager-agent"
+curl -fsSL "${SERVER_URL}/api/agent/binary?os=${AGENT_OS}&arch=${AGENT_ARCH}" -o "${INSTALL_DIR}/ssl-manager-agent"
+if [ ! -s "${INSTALL_DIR}/ssl-manager-agent" ]; then
+    echo "ERROR: Downloaded file is empty or download failed"
+    rm -f "${INSTALL_DIR}/ssl-manager-agent"
+    exit 1
+fi
 chmod +x "${INSTALL_DIR}/ssl-manager-agent"
 echo "    Binary installed to ${INSTALL_DIR}/ssl-manager-agent"
 

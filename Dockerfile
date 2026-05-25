@@ -34,6 +34,7 @@ FROM alpine:3.20
 RUN apk add --no-cache \
     ca-certificates \
     certbot \
+    certbot-dns-cloudflare \
     curl \
     tzdata
 
@@ -50,8 +51,8 @@ COPY --from=builder /out/agent-version.txt /app/bin/agent-version.txt
 # Copy web assets (templates and static files are embedded, but keep for reference)
 # The Go binary embeds web/ via embed.FS, so no separate copy needed.
 
-# Create data directory
-RUN mkdir -p /app/data /app/bin && \
+# Create data directory and certbot working directory (writable by sslmanager)
+RUN mkdir -p /app/data /app/data/certbot /app/data/certbot/work /app/data/certbot/logs /app/bin && \
     chmod 700 /app/data
 
 # Expose default port

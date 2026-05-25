@@ -65,9 +65,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     <td>${expireAt}</td>
                     <td>${lastCheck}</td>
                     <td>
-                        <button class="btn btn-sm btn-secondary" onclick="probeDomain('${d.id}')">探测</button>
+                        ${App._currentRole !== 'readonly' ? `<button class="btn btn-sm btn-secondary" onclick="probeDomain('${d.id}')">探测</button>` : ''}
                         <button class="btn btn-sm btn-secondary" onclick="viewDomain('${d.id}')">详情</button>
-                        <button class="btn btn-sm btn-danger" onclick="deleteDomain('${d.id}')">删除</button>
+                        ${App._currentRole !== 'readonly' ? `<button class="btn btn-sm btn-danger" onclick="deleteDomain('${d.id}')">删除</button>` : ''}
                     </td>
                 </tr>
             `;
