@@ -1,7 +1,9 @@
 # Multi-stage build for SSL Manager
 
 # Stage 1: Build Frontend
-FROM node:20-alpine AS frontend-builder
+# Run build stages on the native BuildKit host platform. Without this, the
+# linux/arm64 matrix job runs Node/Go under QEMU on GitHub amd64 runners.
+FROM --platform=$BUILDPLATFORM node:20-alpine AS frontend-builder
 
 WORKDIR /app/webui
 RUN corepack enable && corepack prepare pnpm@9 --activate
@@ -15,9 +17,10 @@ COPY webui/ ./
 RUN pnpm build
 
 # Stage 2: Build Web Backend and Agent
-FROM golang:1.25-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder
 
 WORKDIR /src
+ARG BUILDPLATFORM
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
 ARG VERSION=0.0.0
