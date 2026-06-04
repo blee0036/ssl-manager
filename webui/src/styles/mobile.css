@@ -33,4 +33,40 @@
     min-height: 44px;
     min-width: 44px;
   }
+
+  /* --- Layout adaptive rules --- */
+
+  /* Page toolbar: allow wrapping on mobile */
+  .n-card .n-space {
+    flex-wrap: wrap !important;
+  }
+
+  /* Filter selects: full width on mobile */
+  .filter-select {
+    width: 100% !important;
+    min-width: 120px !important;
+  }
+
+  /* Form items: ensure inputs take full width */
+  .n-form-item .n-input,
+  .n-form-item .n-input-number,
+  .n-form-item .n-select {
+    width: 100% !important;
+  }
+
+  /* Dialog footer buttons: allow wrapping */
+  .n-card__footer .n-space {
+    flex-wrap: wrap !important;
+  }
+
+  /* NCard inside modal: respect viewport */
+  .n-modal .n-card {
+    max-width: calc(100vw - 32px) !important;
+    margin: 16px !important;
+  }
+
+  /* Steps component: allow text wrapping */
+  .n-steps {
+    overflow-x: auto;
+  }
 }

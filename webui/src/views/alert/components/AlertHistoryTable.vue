@@ -134,13 +134,13 @@ const columns: DataTableColumns<Api.AlertHistory> = [
 <template>
   <div>
     <!-- 筛选栏 -->
-    <NSpace class="mb-4" size="small">
+    <NSpace class="mb-4" size="small" :wrap="true">
       <NSelect
         v-model:value="filterLevel"
         :options="levelOptions"
         placeholder="级别"
         clearable
-        style="width: 140px"
+        class="filter-select"
         @update:value="handleFilterChange"
       />
       <NSelect
@@ -148,7 +148,7 @@ const columns: DataTableColumns<Api.AlertHistory> = [
         :options="typeOptions"
         placeholder="类型"
         clearable
-        style="width: 140px"
+        class="filter-select"
         @update:value="handleFilterChange"
       />
       <NSelect
@@ -156,7 +156,7 @@ const columns: DataTableColumns<Api.AlertHistory> = [
         :options="statusOptions"
         placeholder="状态"
         clearable
-        style="width: 140px"
+        class="filter-select"
         @update:value="handleFilterChange"
       />
     </NSpace>
@@ -173,3 +173,9 @@ const columns: DataTableColumns<Api.AlertHistory> = [
     />
   </div>
 </template>
+
+<style scoped>
+.filter-select {
+  width: 140px;
+}
+</style>

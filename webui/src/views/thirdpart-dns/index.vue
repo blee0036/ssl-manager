@@ -103,9 +103,9 @@ function handleViewLogs(item: Api.ThirdpartDns) {
   <div class="thirdpart-dns-page">
     <!-- 操作栏 -->
     <NCard class="mb-4">
-      <NSpace justify="space-between">
+      <NSpace justify="space-between" align="center" :wrap="true">
         <span class="text-lg font-medium">第三方 DNS 管理</span>
-        <NSpace>
+        <NSpace :wrap="true">
           <NButton
             v-permission:action="'write'"
             type="primary"

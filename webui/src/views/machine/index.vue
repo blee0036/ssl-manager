@@ -118,9 +118,9 @@ async function handleRevokeConfirm() {
   <div class="machine-page">
     <!-- 操作栏 -->
     <NCard class="mb-4">
-      <NSpace justify="space-between">
+      <NSpace justify="space-between" align="center" :wrap="true">
         <span class="text-lg font-medium">机器管理</span>
-        <NSpace>
+        <NSpace :wrap="true">
           <NButton
             v-permission:action="'write'"
             type="primary"

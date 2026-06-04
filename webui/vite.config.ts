@@ -32,7 +32,15 @@ export default defineConfig({
         target: 'http://localhost:8080',
         changeOrigin: true,
       },
-      '/init': {
+      '/init/status': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+      },
+      '/init/admin': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+      },
+      '/init/config': {
         target: 'http://localhost:8080',
         changeOrigin: true,
       },

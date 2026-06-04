@@ -144,7 +144,7 @@ function handleTabChange(tab: string) {
       >
         <!-- 通知渠道 Tab -->
         <NTabPane name="channels" tab="通知渠道">
-          <NSpace justify="end" class="mb-4">
+          <NSpace justify="end" :wrap="true" class="mb-4">
             <NButton
               v-permission:action="'write'"
               type="primary"

@@ -117,8 +117,7 @@ function handleClose() {
         ref="formRef"
         :model="formModel"
         :rules="rules"
-        label-placement="left"
-        label-width="100"
+        label-placement="top"
       >
         <NFormItem label="选择证书" path="certificate_id">
           <NSelect

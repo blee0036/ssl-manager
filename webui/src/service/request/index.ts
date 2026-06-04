@@ -106,10 +106,9 @@ export function handleUnauthorized(): void {
   // 取消所有待处理请求
   cancelAllPendingRequests();
 
-  // 使用动态 import 打断 request -> router 的静态循环依赖
-  import('@/router').then(({ router }) => {
-    router.push('/login');
-  });
+  // 使用 window.location 跳转，避免 request -> router 的循环依赖
+  // 同时做全页面刷新清除所有内存状态
+  window.location.href = '/login';
 
   setTimeout(() => {
     isRedirecting = false;

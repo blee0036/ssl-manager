@@ -51,7 +51,7 @@ function handleRefresh() {
 <template>
   <NDrawer
     :show="show"
-    :width="600"
+    :width="'min(600px, 100vw)'"
     placement="right"
     @update:show="emit('update:show', $event)"
   >

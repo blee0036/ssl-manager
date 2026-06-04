@@ -134,7 +134,7 @@ async function onSubmit() {
 
 <template>
   <NModal :show="props.show" :mask-closable="!submitting" :close-on-esc="!submitting" @update:show="emit('update:show', $event)">
-    <NCard title="上传证书" style="width: 520px" :bordered="false" :closable="!submitting" @close="handleClose">
+    <NCard title="上传证书" style="width: 520px; max-width: calc(100vw - 32px)" :bordered="false" :closable="!submitting" @close="handleClose">
       <NForm ref="formRef" :model="formData" :rules="rules" label-placement="top">
         <NFormItem label="证书名称" path="name">
           <NInput v-model:value="formData.name" placeholder="请输入证书名称" />

@@ -41,3 +41,5 @@ codex_review.md
 # WebUI
 webui/node_modules/
 webui/dist/
+webui/test-results/
+webui/playwright-report/

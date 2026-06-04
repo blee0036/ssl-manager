@@ -160,7 +160,7 @@ function hasMissingValues(): boolean {
   <NModal :show="props.show" :mask-closable="!submitting && !verifying" :close-on-esc="!submitting && !verifying" @update:show="emit('update:show', $event)">
     <NCard
       title="手动 DNS 签发"
-      style="width: 600px"
+      style="width: 600px; max-width: calc(100vw - 32px)"
       :bordered="false"
       :closable="!submitting && !verifying"
       @close="handleClose"

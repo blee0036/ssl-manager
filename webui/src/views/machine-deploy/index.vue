@@ -131,14 +131,14 @@ function handleViewLog(config: Api.MachineCertificate) {
   <div class="machine-deploy-page">
     <!-- 操作栏 -->
     <NCard class="mb-4">
-      <NSpace justify="space-between">
-        <NSpace align="center">
+      <NSpace justify="space-between" align="center" :wrap="true">
+        <NSpace align="center" :wrap="true">
           <NButton quaternary @click="router.push('/machines')">
             ← 返回机器列表
           </NButton>
           <span class="text-lg font-medium">机器部署配置</span>
         </NSpace>
-        <NSpace>
+        <NSpace :wrap="true">
           <NButton
             v-permission:action="'write'"
             type="primary"

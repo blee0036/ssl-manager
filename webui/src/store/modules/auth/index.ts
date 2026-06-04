@@ -53,22 +53,18 @@ export const useAuthStore = defineStore('auth', {
 
     /**
      * 退出登录：清除认证信息并跳转到登录页
-     * 使用动态 import 打断 store -> router 的静态循环依赖
      */
-    async logout() {
+    logout() {
       this.clearAuth();
-      const { router } = await import('@/router');
-      router.push('/login');
+      window.location.href = '/login';
     },
 
     /**
      * 处理 401 未授权：清除认证信息并跳转到登录页
-     * 使用动态 import 打断 store -> router 的静态循环依赖
      */
-    async handleUnauthorized() {
+    handleUnauthorized() {
       this.clearAuth();
-      const { router } = await import('@/router');
-      router.push('/login');
+      window.location.href = '/login';
     },
   },
 });

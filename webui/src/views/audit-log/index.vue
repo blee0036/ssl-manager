@@ -181,15 +181,15 @@ const columns: DataTableColumns<Api.AuditLog> = [
   <div class="audit-log-page">
     <!-- 操作栏 -->
     <NCard class="mb-4">
-      <NSpace justify="space-between" align="center">
+      <NSpace justify="space-between" align="center" :wrap="true">
         <span class="text-lg font-medium">审计日志</span>
-        <NSpace>
+        <NSpace :wrap="true">
           <NSelect
             v-model:value="actorTypeFilter"
             :options="actorTypeOptions"
             placeholder="操作者类型"
             clearable
-            style="width: 150px"
+            class="filter-select"
             @update:value="handleFilterChange"
           />
           <NSelect
@@ -197,7 +197,7 @@ const columns: DataTableColumns<Api.AuditLog> = [
             :options="targetTypeOptions"
             placeholder="目标类型"
             clearable
-            style="width: 150px"
+            class="filter-select"
             @update:value="handleFilterChange"
           />
         </NSpace>
@@ -234,3 +234,9 @@ const columns: DataTableColumns<Api.AuditLog> = [
     </NCard>
   </div>
 </template>
+
+<style scoped>
+.filter-select {
+  width: 150px;
+}
+</style>

@@ -86,9 +86,9 @@ onMounted(() => {
   <div class="page-container p-4">
     <!-- 操作栏 -->
     <NCard class="mb-4">
-      <NSpace justify="space-between" align="center">
+      <NSpace justify="space-between" align="center" :wrap="true">
         <h2 class="text-lg font-bold m-0">证书管理</h2>
-        <NSpace>
+        <NSpace :wrap="true">
           <NButton
             v-permission:action="'write'"
             type="primary"

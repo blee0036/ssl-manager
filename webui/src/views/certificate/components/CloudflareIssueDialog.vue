@@ -129,7 +129,7 @@ async function onSubmit() {
   <NModal :show="props.show" :mask-closable="!submitting" :close-on-esc="!submitting" @update:show="emit('update:show', $event)">
     <NCard
       title="Cloudflare DNS 签发"
-      style="width: 520px"
+      style="width: 520px; max-width: calc(100vw - 32px)"
       :bordered="false"
       :closable="!submitting"
       @close="handleClose"

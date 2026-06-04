@@ -207,8 +207,7 @@ function handleClose() {
         ref="formRef"
         :model="formModel"
         :rules="rules"
-        label-placement="left"
-        label-width="100"
+        label-placement="top"
       >
         <NFormItem label="名称" path="name">
           <NInput v-model:value="formModel.name" placeholder="请输入名称" />

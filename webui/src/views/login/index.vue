@@ -83,9 +83,11 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
+  width: 100%;
   min-height: 100vh;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   padding: 16px;
+  box-sizing: border-box;
 }
 
 .login-container {

@@ -215,9 +215,9 @@ const columns: DataTableColumns<Api.User> = [
   <div class="user-page">
     <!-- 操作栏 -->
     <NCard class="mb-4">
-      <NSpace justify="space-between">
+      <NSpace justify="space-between" align="center" :wrap="true">
         <span class="text-lg font-medium">用户管理</span>
-        <NSpace>
+        <NSpace :wrap="true">
           <NButton type="primary" @click="handleCreate">
             创建用户
           </NButton>

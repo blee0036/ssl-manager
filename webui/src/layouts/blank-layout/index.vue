@@ -3,7 +3,14 @@
 </script>
 
 <template>
-  <div class="flex flex-col items-center justify-center min-h-screen bg-gray-50">
+  <div class="blank-layout">
     <router-view />
   </div>
 </template>
+
+<style scoped>
+.blank-layout {
+  width: 100%;
+  min-height: 100vh;
+}
+</style>
