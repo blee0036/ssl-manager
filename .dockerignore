@@ -9,3 +9,4 @@ data/
 codex_review.md
 requirements.md
 webui/node_modules/
+webui/dist/

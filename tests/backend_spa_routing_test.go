@@ -20,8 +20,8 @@ import (
 //
 // Property 1: SPA 路由正确性
 // For any non-API path (not starting with /api/ and not /health), the SPA handler
-// returns index.html content. For API paths (starting with /api/) and /health,
-// the SPA handler is not triggered (they are handled by separate routers).
+// returns index.html content unless it is a missing static asset. API paths,
+// /health, and missing static assets must not fall back to index.html.
 //
 // Property 5: Turnstile Secret 不泄露
 // The GET /api/auth/turnstile-config endpoint never returns the secret_key value
@@ -138,9 +138,7 @@ func TestSPARouting_Property1_NonAPIPathsReturnIndexHTML(t *testing.T) {
 }
 
 // TestSPARouting_Property1_APIPathsNotFallback verifies that API paths and /health
-// are NOT handled by the SPA handler. In the real server, these are registered on
-// separate route handlers BEFORE the SPA catch-all. We verify the SPA handler
-// does NOT intercept them by confirming the routing design.
+// are NOT served index.html by the SPA fallback when no route matches.
 func TestSPARouting_Property1_APIPathsNotFallback(t *testing.T) {
 	testFS := createTestFS()
 	spaHandler := handler.NewSPAHandler(testFS)
@@ -150,26 +148,16 @@ func TestSPARouting_Property1_APIPathsNotFallback(t *testing.T) {
 
 	properties := gopter.NewProperties(parameters)
 
-	// The SPA handler, when given an API path, would serve index.html (since the file
-	// doesn't exist in the FS). In the real chi router, API routes are registered first
-	// and take priority. This test verifies the architectural constraint: API paths
-	// should be handled by API handlers, not the SPA fallback.
-	//
-	// We test this by verifying that the SPA handler's response for API paths is
-	// index.html (proving it would incorrectly serve SPA content if not properly routed),
-	// which confirms the necessity of registering API routes BEFORE the SPA catch-all.
-	properties.Property("API paths must be registered before SPA catch-all to avoid fallback", prop.ForAll(
+	properties.Property("API paths return 404 instead of SPA fallback", prop.ForAll(
 		func(apiPath string) bool {
 			fullPath := "/api/" + apiPath
 			req := httptest.NewRequest(http.MethodGet, fullPath, nil)
 			rec := httptest.NewRecorder()
 			spaHandler.ServeHTTP(rec, req)
 
-			// The SPA handler would serve index.html for these paths (since /api/* files
-			// don't exist in the static FS). This proves that in the real server,
-			// API routes MUST be registered before the SPA catch-all.
 			body := rec.Body.String()
-			return strings.Contains(body, "<div id=\"app\"></div>")
+			return rec.Code == http.StatusNotFound &&
+				!strings.Contains(body, "<div id=\"app\"></div>")
 		},
 		gen.OneGenOf(
 			gen.OneConstOf("certificates", "machines", "domains", "auth/login",
@@ -180,21 +168,51 @@ func TestSPARouting_Property1_APIPathsNotFallback(t *testing.T) {
 		),
 	))
 
-	// Verify /health path behavior - same principle
-	properties.Property("health path must be registered before SPA catch-all", prop.ForAll(
+	properties.Property("health path returns 404 instead of SPA fallback", prop.ForAll(
 		func(_ int) bool {
 			req := httptest.NewRequest(http.MethodGet, "/health", nil)
 			rec := httptest.NewRecorder()
 			spaHandler.ServeHTTP(rec, req)
 
-			// SPA handler would serve index.html for /health since the file doesn't exist
 			body := rec.Body.String()
-			return strings.Contains(body, "<div id=\"app\"></div>")
+			return rec.Code == http.StatusNotFound &&
+				!strings.Contains(body, "<div id=\"app\"></div>")
 		},
 		gen.Const(0),
 	))
 
 	properties.TestingRun(t)
+}
+
+func TestSPARouting_MissingStaticAssetsReturn404(t *testing.T) {
+	testFS := createTestFS()
+	spaHandler := handler.NewSPAHandler(testFS)
+
+	paths := []string{
+		"/assets/missing.js",
+		"/assets/missing.css",
+		"/assets/",
+		"/favicon-missing.ico",
+		"/robots.txt",
+	}
+
+	for _, reqPath := range paths {
+		t.Run(reqPath, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, reqPath, nil)
+			rec := httptest.NewRecorder()
+			spaHandler.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("expected 404, got %d; body: %s", rec.Code, rec.Body.String())
+			}
+			if strings.Contains(rec.Body.String(), "<div id=\"app\"></div>") {
+				t.Fatalf("missing static asset must not return index.html")
+			}
+			if strings.Contains(rec.Header().Get("Content-Type"), "text/html") {
+				t.Fatalf("missing static asset must not return text/html")
+			}
+		})
+	}
 }
 
 // TestTurnstileSecret_Property5_NeverLeaksSecretKey tests that the turnstile-config

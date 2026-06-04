@@ -11,8 +11,8 @@ import (
 )
 
 // WebUIHandler serves the SPA frontend from an embedded or OS filesystem.
-// It implements SPA fallback: if the requested file does not exist, it serves index.html
-// so that client-side routing (Vue Router) can handle the path.
+// It implements SPA fallback for client-side routes. Static assets and backend
+// API paths are never served index.html when missing.
 type WebUIHandler struct {
 	distFS     fs.FS
 	fileServer http.Handler
@@ -36,7 +36,8 @@ func (h *WebUIHandler) RegisterRoutes(r chi.Router) {
 // serveSPA serves static files from the embedded filesystem.
 // If the requested file exists, it is served directly with proper content type.
 // If the file does not exist (SPA client route like /dashboard, /certificates),
-// index.html is served so Vue Router can handle the route.
+// index.html is served so Vue Router can handle the route. Missing static assets
+// return 404 to avoid serving HTML to module script requests.
 func (h *WebUIHandler) serveSPA(w http.ResponseWriter, r *http.Request) {
 	// Clean the URL path
 	urlPath := path.Clean(r.URL.Path)
@@ -50,6 +51,10 @@ func (h *WebUIHandler) serveSPA(w http.ResponseWriter, r *http.Request) {
 	// Try to open the file from the embedded filesystem
 	f, err := h.distFS.Open(filePath)
 	if err != nil {
+		if shouldReturnNotFound(urlPath) {
+			serveNotFound(w, r)
+			return
+		}
 		// File not found — serve index.html for SPA fallback
 		h.serveIndex(w, r)
 		return
@@ -59,12 +64,37 @@ func (h *WebUIHandler) serveSPA(w http.ResponseWriter, r *http.Request) {
 	// Check if it's a directory (e.g., /assets/) — serve index.html
 	stat, err := f.Stat()
 	if err != nil || stat.IsDir() {
+		if shouldReturnNotFound(urlPath) {
+			serveNotFound(w, r)
+			return
+		}
 		h.serveIndex(w, r)
 		return
 	}
 
 	// File exists — serve it via the file server
+	if strings.HasPrefix(urlPath, "/assets/") {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	}
 	h.fileServer.ServeHTTP(w, r)
+}
+
+func shouldReturnNotFound(urlPath string) bool {
+	return strings.HasPrefix(urlPath, "/assets/") ||
+		strings.HasPrefix(urlPath, "/static/") ||
+		strings.HasPrefix(urlPath, "/api/") ||
+		strings.HasPrefix(urlPath, "/init/") ||
+		urlPath == "/assets" ||
+		urlPath == "/static" ||
+		urlPath == "/api" ||
+		urlPath == "/health" ||
+		strings.HasPrefix(urlPath, "/favicon") ||
+		path.Ext(urlPath) != ""
+}
+
+func serveNotFound(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	http.NotFound(w, r)
 }
 
 // serveIndex serves the index.html file for SPA fallback.
