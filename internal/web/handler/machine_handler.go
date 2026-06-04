@@ -82,10 +82,20 @@ func (h *MachineHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Set audit info with the newly created machine ID
+	middleware.SetAuditInfo(r, middleware.AuditInfo{
+		TargetType: "machine",
+		TargetID:   machine.ID,
+		Operation:  "create_machine",
+	})
+
 	// Return machine with the plaintext token (only shown once)
+	// Also include the install command using the configured external_url
+	installCmd, _ := h.machineService.GetInstallCommand(r.Context(), machine.ID, token)
 	resp := map[string]interface{}{
-		"machine":     machine,
-		"agent_token": token,
+		"machine":         machine,
+		"agent_token":     token,
+		"install_command": installCmd,
 	}
 	writeSuccessResponse(w, http.StatusCreated, "machine created", resp)
 }
@@ -201,6 +211,9 @@ func (h *MachineHandler) RegenerateToken(w http.ResponseWriter, r *http.Request)
 	resp := map[string]interface{}{
 		"agent_token": token,
 	}
+	// Also include the install command using the configured external_url
+	installCmd, _ := h.machineService.GetInstallCommand(r.Context(), id, token)
+	resp["install_command"] = installCmd
 	writeSuccessResponse(w, http.StatusOK, "token regenerated", resp)
 }
 

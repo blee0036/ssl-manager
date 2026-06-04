@@ -91,6 +91,13 @@ func (h *MachineCertificateHandler) Create(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Set audit info with the newly created deployment config ID
+	middleware.SetAuditInfo(r, middleware.AuditInfo{
+		TargetType: "machine_certificate",
+		TargetID:   mc.ID,
+		Operation:  "create_deployment_config",
+	})
+
 	writeSuccessResponse(w, http.StatusCreated, "deployment config created", mc)
 }
 
@@ -123,6 +130,13 @@ func (h *MachineCertificateHandler) Update(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Set audit info for the updated deployment config
+	middleware.SetAuditInfo(r, middleware.AuditInfo{
+		TargetType: "machine_certificate",
+		TargetID:   mcID,
+		Operation:  "update_deployment_config",
+	})
+
 	writeSuccessResponse(w, http.StatusOK, "deployment config updated", mc)
 }
 
@@ -145,6 +159,13 @@ func (h *MachineCertificateHandler) Delete(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Set audit info for the deleted deployment config
+	middleware.SetAuditInfo(r, middleware.AuditInfo{
+		TargetType: "machine_certificate",
+		TargetID:   mcID,
+		Operation:  "delete_deployment_config",
+	})
+
 	writeSuccessResponse(w, http.StatusOK, "deployment config deleted", nil)
 }
 
@@ -166,6 +187,13 @@ func (h *MachineCertificateHandler) TriggerDeploy(w http.ResponseWriter, r *http
 		writeErrorResponse(w, http.StatusInternalServerError, "failed to trigger deploy", err.Error())
 		return
 	}
+
+	// Set audit info for the deploy trigger
+	middleware.SetAuditInfo(r, middleware.AuditInfo{
+		TargetType: "machine_certificate",
+		TargetID:   mcID,
+		Operation:  "trigger_deploy",
+	})
 
 	writeSuccessResponse(w, http.StatusOK, "deploy triggered", nil)
 }

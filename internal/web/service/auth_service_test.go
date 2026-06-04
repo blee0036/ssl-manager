@@ -41,7 +41,7 @@ func TestAuthLogin_Success(t *testing.T) {
 
 	createAuthTestUser(t, userRepo, "admin", "password123", "admin")
 
-	token, err := svc.Login(context.Background(), "admin", "password123")
+	token, err := svc.Login(context.Background(), "admin", "password123", "", "")
 	if err != nil {
 		t.Fatalf("expected successful login, got error: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestAuthLogin_WrongPassword(t *testing.T) {
 
 	createAuthTestUser(t, userRepo, "admin", "password123", "admin")
 
-	_, err := svc.Login(context.Background(), "admin", "wrongpassword")
+	_, err := svc.Login(context.Background(), "admin", "wrongpassword", "", "")
 	if err == nil {
 		t.Fatal("expected error for wrong password")
 	}
@@ -83,7 +83,7 @@ func TestAuthLogin_NonExistentUser(t *testing.T) {
 	cfg := &config.Config{}
 	svc := NewAuthService(userRepo, config.NewRuntimeConfig(cfg), testJWTSecret)
 
-	_, err := svc.Login(context.Background(), "nonexistent", "password123")
+	_, err := svc.Login(context.Background(), "nonexistent", "password123", "", "")
 	if err == nil {
 		t.Fatal("expected error for non-existent user")
 	}
@@ -100,9 +100,9 @@ func TestAuthLogin_SameErrorForWrongUsernameAndPassword(t *testing.T) {
 	createAuthTestUser(t, userRepo, "admin", "password123", "admin")
 
 	// Wrong password
-	_, err1 := svc.Login(context.Background(), "admin", "wrongpassword")
+	_, err1 := svc.Login(context.Background(), "admin", "wrongpassword", "", "")
 	// Non-existent user
-	_, err2 := svc.Login(context.Background(), "nonexistent", "password123")
+	_, err2 := svc.Login(context.Background(), "nonexistent", "password123", "", "")
 
 	// Both should return the same generic error
 	if err1 == nil || err2 == nil {
@@ -126,7 +126,7 @@ func TestAuthLogin_DisabledUser(t *testing.T) {
 		t.Fatalf("failed to disable user: %v", err)
 	}
 
-	_, err = svc.Login(context.Background(), "disabled_user", "password123")
+	_, err = svc.Login(context.Background(), "disabled_user", "password123", "", "")
 	if err == nil {
 		t.Fatal("expected error for disabled user")
 	}
@@ -145,7 +145,7 @@ func TestAuthLoginReadonly_Enabled(t *testing.T) {
 	}
 	svc := NewAuthService(userRepo, config.NewRuntimeConfig(cfg), testJWTSecret)
 
-	token, err := svc.LoginReadonly(context.Background(), "readonly-pass")
+	token, err := svc.LoginReadonly(context.Background(), "readonly-pass", "", "")
 	if err != nil {
 		t.Fatalf("expected successful readonly login, got error: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestAuthLoginReadonly_Disabled(t *testing.T) {
 	}
 	svc := NewAuthService(userRepo, config.NewRuntimeConfig(cfg), testJWTSecret)
 
-	_, err := svc.LoginReadonly(context.Background(), "any-password")
+	_, err := svc.LoginReadonly(context.Background(), "any-password", "", "")
 	if err == nil {
 		t.Fatal("expected error when readonly is disabled")
 	}
@@ -194,7 +194,7 @@ func TestAuthLoginReadonly_WrongPassword(t *testing.T) {
 	}
 	svc := NewAuthService(userRepo, config.NewRuntimeConfig(cfg), testJWTSecret)
 
-	_, err := svc.LoginReadonly(context.Background(), "wrong-pass")
+	_, err := svc.LoginReadonly(context.Background(), "wrong-pass", "", "")
 	if err == nil {
 		t.Fatal("expected error for wrong readonly password")
 	}
@@ -210,7 +210,7 @@ func TestAuthValidateToken_Valid(t *testing.T) {
 
 	createAuthTestUser(t, userRepo, "testuser", "password123", "user")
 
-	token, err := svc.Login(context.Background(), "testuser", "password123")
+	token, err := svc.Login(context.Background(), "testuser", "password123", "", "")
 	if err != nil {
 		t.Fatalf("login failed: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestAuthValidateToken_WrongSecret(t *testing.T) {
 
 	createAuthTestUser(t, userRepo, "testuser", "password123", "user")
 
-	token, err := svc.Login(context.Background(), "testuser", "password123")
+	token, err := svc.Login(context.Background(), "testuser", "password123", "", "")
 	if err != nil {
 		t.Fatalf("login failed: %v", err)
 	}
@@ -310,7 +310,7 @@ func TestAuthLogin_TokenExpiry(t *testing.T) {
 
 	createAuthTestUser(t, userRepo, "testuser", "password123", "user")
 
-	token, err := svc.Login(context.Background(), "testuser", "password123")
+	token, err := svc.Login(context.Background(), "testuser", "password123", "", "")
 	if err != nil {
 		t.Fatalf("login failed: %v", err)
 	}

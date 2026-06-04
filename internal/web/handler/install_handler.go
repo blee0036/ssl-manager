@@ -368,6 +368,7 @@ echo "    Platform: ${AGENT_OS}/${AGENT_ARCH}"
 
 # Step 1: Download agent binary
 echo "==> Downloading agent binary..."
+mkdir -p "${INSTALL_DIR}"
 curl -fsSL "${SERVER_URL}/api/agent/binary?os=${AGENT_OS}&arch=${AGENT_ARCH}" -o "${INSTALL_DIR}/ssl-manager-agent"
 if [ ! -s "${INSTALL_DIR}/ssl-manager-agent" ]; then
     echo "ERROR: Downloaded file is empty or download failed"

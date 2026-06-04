@@ -131,6 +131,9 @@ func (h *InitHandler) SaveConfig(w http.ResponseWriter, r *http.Request) {
 	if maskedCfg.Readonly.ViewPassword != "" {
 		maskedCfg.Readonly.ViewPassword = "***"
 	}
+	if maskedCfg.Turnstile.SecretKey != "" {
+		maskedCfg.Turnstile.SecretKey = "***"
+	}
 
 	writeSuccessResponse(w, http.StatusOK, "configuration saved", &maskedCfg)
 }

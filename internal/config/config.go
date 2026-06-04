@@ -21,6 +21,7 @@ type Config struct {
 	Certbot       CertbotConfig       `json:"certbot"`
 	Readonly      ReadonlyConfig      `json:"readonly"`
 	DomainMonitor DomainMonitorConfig `json:"domain_monitor"`
+	Turnstile     TurnstileConfig     `json:"turnstile"`
 }
 
 // ServerConfig holds settings for the Web Backend server.
@@ -59,6 +60,13 @@ type DomainMonitorConfig struct {
 	IntervalMinutes int `json:"interval_minutes"`  // 监控间隔分钟数，默认 60
 }
 
+// TurnstileConfig holds settings for Cloudflare Turnstile human verification.
+type TurnstileConfig struct {
+	Enabled   bool   `json:"enabled"`    // 是否启用 Turnstile 验证，默认 false
+	SiteKey   string `json:"site_key"`   // Turnstile site key（前端使用）
+	SecretKey string `json:"secret_key"` // Turnstile secret key（仅后端使用，绝不下发前端）
+}
+
 // DefaultConfig returns a Config with sensible default values.
 func DefaultConfig() *Config {
 	return &Config{
@@ -85,6 +93,11 @@ func DefaultConfig() *Config {
 		DomainMonitor: DomainMonitorConfig{
 			DefaultPort:     443,
 			IntervalMinutes: 60,
+		},
+		Turnstile: TurnstileConfig{
+			Enabled:   false,
+			SiteKey:   "",
+			SecretKey: "",
 		},
 	}
 }
@@ -171,6 +184,15 @@ func ValidateConfig(cfg *Config) error {
 
 	if cfg.DomainMonitor.IntervalMinutes <= 0 {
 		return errors.New("domain_monitor.interval_minutes must be positive")
+	}
+
+	if cfg.Turnstile.Enabled {
+		if cfg.Turnstile.SiteKey == "" {
+			return errors.New("turnstile.site_key is required when turnstile is enabled")
+		}
+		if cfg.Turnstile.SecretKey == "" {
+			return errors.New("turnstile.secret_key is required when turnstile is enabled")
+		}
 	}
 
 	return nil

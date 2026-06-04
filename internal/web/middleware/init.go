@@ -7,6 +7,23 @@ import (
 	"strings"
 )
 
+// staticAssetExtensions lists file extensions that are always considered static assets.
+var staticAssetExtensions = []string{
+	".js", ".css", ".svg", ".ico", ".png", ".jpg", ".jpeg", ".gif", ".webp",
+	".woff", ".woff2", ".ttf", ".eot", ".map", ".json",
+}
+
+// isStaticAsset returns true if the path ends with a known static asset extension.
+func isStaticAsset(path string) bool {
+	lower := strings.ToLower(path)
+	for _, ext := range staticAssetExtensions {
+		if strings.HasSuffix(lower, ext) {
+			return true
+		}
+	}
+	return false
+}
+
 // InitChecker defines the interface for checking initialization status.
 type InitChecker interface {
 	// NeedsInit returns true if the system needs initialization.
@@ -30,7 +47,13 @@ func InitMiddleware(checker InitChecker) func(http.Handler) http.Handler {
 			}
 
 			// Always allow static assets
-			if strings.HasPrefix(path, "/static/") {
+			if strings.HasPrefix(path, "/static/") || strings.HasPrefix(path, "/assets/") || strings.HasPrefix(path, "/favicon") {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// Allow common static asset file extensions
+			if isStaticAsset(path) {
 				next.ServeHTTP(w, r)
 				return
 			}

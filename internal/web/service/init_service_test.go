@@ -267,3 +267,133 @@ func TestInitService_IsInitialized_CachesResult(t *testing.T) {
 		t.Error("expected IsInitialized to return true after admin creation")
 	}
 }
+
+func TestInitService_SaveConfig_WithTurnstile_Success(t *testing.T) {
+	db := setupInitTestDB(t)
+	userRepo := repository.NewUserRepository(db.DB)
+	configDir := t.TempDir()
+	configPath := filepath.Join(configDir, "config.json")
+
+	svc := NewInitService(db, userRepo, configPath, nil)
+
+	ctx := context.Background()
+
+	// Create admin first
+	_, err := svc.CreateAdmin(ctx, CreateAdminInput{
+		Username: "admin",
+		Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("failed to create admin: %v", err)
+	}
+
+	// Save config with Turnstile enabled
+	cfg, err := svc.SaveConfig(ctx, SaveConfigInput{
+		Server: &config.ServerConfig{
+			ExternalURL: "https://ssl.example.com",
+		},
+		Turnstile: &config.TurnstileConfig{
+			Enabled:   true,
+			SiteKey:   "site-key-123",
+			SecretKey: "secret-key-456",
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to save config: %v", err)
+	}
+
+	if !cfg.Turnstile.Enabled {
+		t.Error("expected Turnstile to be enabled")
+	}
+	if cfg.Turnstile.SiteKey != "site-key-123" {
+		t.Errorf("expected site_key 'site-key-123', got '%s'", cfg.Turnstile.SiteKey)
+	}
+	if cfg.Turnstile.SecretKey != "secret-key-456" {
+		t.Errorf("expected secret_key 'secret-key-456', got '%s'", cfg.Turnstile.SecretKey)
+	}
+
+	// Verify config was persisted to disk
+	loaded, err := config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("failed to load saved config: %v", err)
+	}
+	if !loaded.Turnstile.Enabled {
+		t.Error("expected persisted Turnstile to be enabled")
+	}
+	if loaded.Turnstile.SiteKey != "site-key-123" {
+		t.Errorf("expected persisted site_key 'site-key-123', got '%s'", loaded.Turnstile.SiteKey)
+	}
+	if loaded.Turnstile.SecretKey != "secret-key-456" {
+		t.Errorf("expected persisted secret_key 'secret-key-456', got '%s'", loaded.Turnstile.SecretKey)
+	}
+}
+
+func TestInitService_SaveConfig_TurnstileEnabled_MissingSiteKey(t *testing.T) {
+	db := setupInitTestDB(t)
+	userRepo := repository.NewUserRepository(db.DB)
+	configDir := t.TempDir()
+	configPath := filepath.Join(configDir, "config.json")
+
+	svc := NewInitService(db, userRepo, configPath, nil)
+
+	ctx := context.Background()
+
+	// Create admin first
+	_, err := svc.CreateAdmin(ctx, CreateAdminInput{
+		Username: "admin",
+		Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("failed to create admin: %v", err)
+	}
+
+	// Try to save config with Turnstile enabled but missing site_key
+	_, err = svc.SaveConfig(ctx, SaveConfigInput{
+		Server: &config.ServerConfig{
+			ExternalURL: "https://ssl.example.com",
+		},
+		Turnstile: &config.TurnstileConfig{
+			Enabled:   true,
+			SiteKey:   "",
+			SecretKey: "secret-key-456",
+		},
+	})
+	if err == nil {
+		t.Fatal("expected validation error when site_key is missing, got nil")
+	}
+}
+
+func TestInitService_SaveConfig_TurnstileEnabled_MissingSecretKey(t *testing.T) {
+	db := setupInitTestDB(t)
+	userRepo := repository.NewUserRepository(db.DB)
+	configDir := t.TempDir()
+	configPath := filepath.Join(configDir, "config.json")
+
+	svc := NewInitService(db, userRepo, configPath, nil)
+
+	ctx := context.Background()
+
+	// Create admin first
+	_, err := svc.CreateAdmin(ctx, CreateAdminInput{
+		Username: "admin",
+		Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("failed to create admin: %v", err)
+	}
+
+	// Try to save config with Turnstile enabled but missing secret_key
+	_, err = svc.SaveConfig(ctx, SaveConfigInput{
+		Server: &config.ServerConfig{
+			ExternalURL: "https://ssl.example.com",
+		},
+		Turnstile: &config.TurnstileConfig{
+			Enabled:   true,
+			SiteKey:   "site-key-123",
+			SecretKey: "",
+		},
+	})
+	if err == nil {
+		t.Fatal("expected validation error when secret_key is missing, got nil")
+	}
+}

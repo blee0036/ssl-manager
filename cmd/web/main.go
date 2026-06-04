@@ -5,7 +5,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -26,7 +28,7 @@ import (
 	"github.com/ssl-manager/ssl-manager/internal/web/middleware"
 	"github.com/ssl-manager/ssl-manager/internal/web/repository"
 	"github.com/ssl-manager/ssl-manager/internal/web/service"
-	"github.com/ssl-manager/ssl-manager/web"
+	"github.com/ssl-manager/ssl-manager/webui"
 )
 
 const dataDir = "./data"
@@ -220,12 +222,18 @@ func run() error {
 	r.Post("/api/auth/login", createLoginHandler(authService))
 	r.Post("/api/auth/readonly-login", createReadonlyLoginHandler(authService))
 
-	// Register Web UI handler (serves HTML pages and static assets)
-	webUIHandler, err := handler.NewWebUIHandler(web.TemplatesFS, web.StaticFS)
+	// Register Turnstile config route (no auth needed — frontend calls before login)
+	turnstileHandler := handler.NewTurnstileHandler(runtimeCfg)
+	turnstileHandler.RegisterRoutes(r)
+
+	// Register SPA handler (serves frontend static files with SPA fallback)
+	// This MUST be registered LAST so that /api/*, /health, /init/* take priority.
+	distFS, err := fs.Sub(webui.DistFS, "dist")
 	if err != nil {
-		return fmt.Errorf("failed to initialize web UI: %w", err)
+		return fmt.Errorf("failed to access webui dist filesystem: %w", err)
 	}
-	webUIHandler.RegisterRoutes(r)
+	spaHandler := handler.NewWebUIHandler(distFS)
+	spaHandler.RegisterRoutes(r)
 
 	// Start scheduler
 	ctx, cancel := context.WithCancel(context.Background())
@@ -312,8 +320,9 @@ func generateJWTSecret() []byte {
 func createLoginHandler(authService *service.AuthService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var input struct {
-			Username string `json:"username"`
-			Password string `json:"password"`
+			Username       string `json:"username"`
+			Password       string `json:"password"`
+			TurnstileToken string `json:"turnstile_token"`
 		}
 
 		if err := decodeJSON(r, &input); err != nil {
@@ -324,8 +333,17 @@ func createLoginHandler(authService *service.AuthService) http.HandlerFunc {
 			return
 		}
 
-		token, err := authService.Login(r.Context(), input.Username, input.Password)
+		remoteIP := service.GetBestEffortRemoteIP(r)
+		token, err := authService.Login(r.Context(), input.Username, input.Password, input.TurnstileToken, remoteIP)
 		if err != nil {
+			// Turnstile errors return specific message
+			if errors.Is(err, service.ErrTurnstileRequired) || errors.Is(err, service.ErrTurnstileFailed) {
+				writeJSON(w, http.StatusForbidden, map[string]interface{}{
+					"code":    403,
+					"message": err.Error(),
+				})
+				return
+			}
 			writeJSON(w, http.StatusUnauthorized, map[string]interface{}{
 				"code":    401,
 				"message": "invalid credentials",
@@ -347,7 +365,8 @@ func createLoginHandler(authService *service.AuthService) http.HandlerFunc {
 func createReadonlyLoginHandler(authService *service.AuthService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var input struct {
-			Password string `json:"password"`
+			Password       string `json:"password"`
+			TurnstileToken string `json:"turnstile_token"`
 		}
 
 		if err := decodeJSON(r, &input); err != nil {
@@ -358,8 +377,17 @@ func createReadonlyLoginHandler(authService *service.AuthService) http.HandlerFu
 			return
 		}
 
-		token, err := authService.LoginReadonly(r.Context(), input.Password)
+		remoteIP := service.GetBestEffortRemoteIP(r)
+		token, err := authService.LoginReadonly(r.Context(), input.Password, input.TurnstileToken, remoteIP)
 		if err != nil {
+			// Turnstile errors return specific message
+			if errors.Is(err, service.ErrTurnstileRequired) || errors.Is(err, service.ErrTurnstileFailed) {
+				writeJSON(w, http.StatusForbidden, map[string]interface{}{
+					"code":    403,
+					"message": err.Error(),
+				})
+				return
+			}
 			writeJSON(w, http.StatusUnauthorized, map[string]interface{}{
 				"code":    401,
 				"message": "invalid credentials",

@@ -208,7 +208,11 @@ func (h *AlertHandler) UpdateChannel(w http.ResponseWriter, r *http.Request) {
 		updates["name"] = *input.Name
 	}
 	if input.ConfigJSON != nil {
-		updates["config_json"] = *input.ConfigJSON
+		// If config_json is empty or contains masked values (***), preserve existing config
+		configVal := strings.TrimSpace(*input.ConfigJSON)
+		if configVal != "" && !strings.Contains(configVal, "***") {
+			updates["config_json"] = *input.ConfigJSON
+		}
 	}
 	if input.Enabled != nil {
 		if *input.Enabled {

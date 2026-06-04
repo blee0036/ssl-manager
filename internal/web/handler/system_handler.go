@@ -46,6 +46,10 @@ func maskConfig(cfg *config.Config) *config.Config {
 	if masked.Readonly.ViewPassword != "" {
 		masked.Readonly.ViewPassword = maskedValue
 	}
+	// Mask turnstile secret key
+	if masked.Turnstile.SecretKey != "" {
+		masked.Turnstile.SecretKey = maskedValue
+	}
 	return &masked
 }
 
@@ -85,9 +89,18 @@ func (h *SystemHandler) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If the client sends the masked value for sensitive fields, preserve the original
-	if input.Readonly.ViewPassword == maskedValue {
+	// Preserve sensitive fields when client sends masked/empty values:
+	// If the client sends "***", empty string, or the field is missing (zero value),
+	// keep the existing value. Only replace if a new non-empty, non-masked value is provided.
+
+	// readonly.view_password preservation
+	if input.Readonly.ViewPassword == "" || input.Readonly.ViewPassword == maskedValue {
 		input.Readonly.ViewPassword = existing.Readonly.ViewPassword
+	}
+
+	// turnstile.secret_key preservation
+	if input.Turnstile.SecretKey == "" || input.Turnstile.SecretKey == maskedValue {
+		input.Turnstile.SecretKey = existing.Turnstile.SecretKey
 	}
 
 	// Save the updated config

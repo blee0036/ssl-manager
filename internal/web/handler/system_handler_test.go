@@ -364,3 +364,281 @@ func TestMaskConfig_EmptyPasswordNotMasked(t *testing.T) {
 		t.Errorf("expected empty password to remain empty, got %q", masked.Readonly.ViewPassword)
 	}
 }
+
+func TestMaskConfig_MasksTurnstileSecretKey(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Turnstile.SecretKey = "my-secret-key"
+	cfg.Turnstile.SiteKey = "my-site-key"
+
+	masked := maskConfig(cfg)
+
+	if masked.Turnstile.SecretKey != "***" {
+		t.Errorf("expected masked turnstile secret_key '***', got %q", masked.Turnstile.SecretKey)
+	}
+
+	// site_key should NOT be masked
+	if masked.Turnstile.SiteKey != "my-site-key" {
+		t.Errorf("expected site_key to remain unchanged, got %q", masked.Turnstile.SiteKey)
+	}
+
+	// Original should not be modified
+	if cfg.Turnstile.SecretKey != "my-secret-key" {
+		t.Errorf("original config was modified, got %q", cfg.Turnstile.SecretKey)
+	}
+}
+
+func TestMaskConfig_EmptyTurnstileSecretNotMasked(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Turnstile.SecretKey = ""
+
+	masked := maskConfig(cfg)
+
+	if masked.Turnstile.SecretKey != "" {
+		t.Errorf("expected empty secret_key to remain empty, got %q", masked.Turnstile.SecretKey)
+	}
+}
+
+func TestSystemHandler_UpdateConfig_PreservesTurnstileSecretWhenMasked(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	// Write config with a real turnstile secret
+	cfg := config.DefaultConfig()
+	cfg.Turnstile.Enabled = true
+	cfg.Turnstile.SiteKey = "site-key-123"
+	cfg.Turnstile.SecretKey = "real-secret-key"
+	if err := config.SaveConfig(configPath, cfg); err != nil {
+		t.Fatalf("failed to save test config: %v", err)
+	}
+
+	handler := NewSystemHandler(configPath, config.NewRuntimeConfig(cfg))
+
+	r := chi.NewRouter()
+	r.Put("/api/system/config", handler.UpdateConfig)
+
+	// Client sends masked value (didn't change it)
+	body := config.DefaultConfig()
+	body.Turnstile.Enabled = true
+	body.Turnstile.SiteKey = "site-key-123"
+	body.Turnstile.SecretKey = "***" // masked value from GET response
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/system/config", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	req = withAdminContext(req)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	// Verify the original secret was preserved
+	saved, err := config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("failed to load saved config: %v", err)
+	}
+	if saved.Turnstile.SecretKey != "real-secret-key" {
+		t.Errorf("expected original secret 'real-secret-key' to be preserved, got %q", saved.Turnstile.SecretKey)
+	}
+}
+
+func TestSystemHandler_UpdateConfig_PreservesTurnstileSecretWhenEmpty(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	// Write config with a real turnstile secret
+	cfg := config.DefaultConfig()
+	cfg.Turnstile.Enabled = true
+	cfg.Turnstile.SiteKey = "site-key-123"
+	cfg.Turnstile.SecretKey = "real-secret-key"
+	if err := config.SaveConfig(configPath, cfg); err != nil {
+		t.Fatalf("failed to save test config: %v", err)
+	}
+
+	handler := NewSystemHandler(configPath, config.NewRuntimeConfig(cfg))
+
+	r := chi.NewRouter()
+	r.Put("/api/system/config", handler.UpdateConfig)
+
+	// Client sends empty secret_key (field missing/empty)
+	body := config.DefaultConfig()
+	body.Turnstile.Enabled = true
+	body.Turnstile.SiteKey = "site-key-123"
+	body.Turnstile.SecretKey = "" // empty = preserve old value
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/system/config", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	req = withAdminContext(req)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	// Verify the original secret was preserved
+	saved, err := config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("failed to load saved config: %v", err)
+	}
+	if saved.Turnstile.SecretKey != "real-secret-key" {
+		t.Errorf("expected original secret 'real-secret-key' to be preserved, got %q", saved.Turnstile.SecretKey)
+	}
+}
+
+func TestSystemHandler_UpdateConfig_ReplacesTurnstileSecretWithNewValue(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	// Write config with an old turnstile secret
+	cfg := config.DefaultConfig()
+	cfg.Turnstile.Enabled = true
+	cfg.Turnstile.SiteKey = "site-key-123"
+	cfg.Turnstile.SecretKey = "old-secret-key"
+	if err := config.SaveConfig(configPath, cfg); err != nil {
+		t.Fatalf("failed to save test config: %v", err)
+	}
+
+	handler := NewSystemHandler(configPath, config.NewRuntimeConfig(cfg))
+
+	r := chi.NewRouter()
+	r.Put("/api/system/config", handler.UpdateConfig)
+
+	// Client sends a new non-masked, non-empty secret
+	body := config.DefaultConfig()
+	body.Turnstile.Enabled = true
+	body.Turnstile.SiteKey = "site-key-123"
+	body.Turnstile.SecretKey = "brand-new-secret" // new value replaces old
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/system/config", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	req = withAdminContext(req)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	// Verify the new secret was saved
+	saved, err := config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("failed to load saved config: %v", err)
+	}
+	if saved.Turnstile.SecretKey != "brand-new-secret" {
+		t.Errorf("expected new secret 'brand-new-secret', got %q", saved.Turnstile.SecretKey)
+	}
+}
+
+func TestSystemHandler_UpdateConfig_TurnstileEnabledRequiresSiteKey(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	cfg := config.DefaultConfig()
+	if err := config.SaveConfig(configPath, cfg); err != nil {
+		t.Fatalf("failed to save test config: %v", err)
+	}
+
+	handler := NewSystemHandler(configPath, config.NewRuntimeConfig(cfg))
+
+	r := chi.NewRouter()
+	r.Put("/api/system/config", handler.UpdateConfig)
+
+	// Enable turnstile but missing site_key
+	body := config.DefaultConfig()
+	body.Turnstile.Enabled = true
+	body.Turnstile.SiteKey = "" // missing!
+	body.Turnstile.SecretKey = "some-secret"
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/system/config", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	req = withAdminContext(req)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status 400 when turnstile enabled without site_key, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestSystemHandler_UpdateConfig_TurnstileEnabledRequiresSecretKey(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	// Start with no existing secret
+	cfg := config.DefaultConfig()
+	cfg.Turnstile.SecretKey = "" // no existing secret to preserve
+	if err := config.SaveConfig(configPath, cfg); err != nil {
+		t.Fatalf("failed to save test config: %v", err)
+	}
+
+	handler := NewSystemHandler(configPath, config.NewRuntimeConfig(cfg))
+
+	r := chi.NewRouter()
+	r.Put("/api/system/config", handler.UpdateConfig)
+
+	// Enable turnstile with site_key but no secret_key (and no existing one to preserve)
+	body := config.DefaultConfig()
+	body.Turnstile.Enabled = true
+	body.Turnstile.SiteKey = "site-key-123"
+	body.Turnstile.SecretKey = "" // empty, and no existing value to preserve
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/system/config", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	req = withAdminContext(req)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status 400 when turnstile enabled without secret_key, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestSystemHandler_GetConfig_MasksTurnstileSecret(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	cfg := config.DefaultConfig()
+	cfg.Turnstile.Enabled = true
+	cfg.Turnstile.SiteKey = "my-site-key"
+	cfg.Turnstile.SecretKey = "my-secret-key"
+	if err := config.SaveConfig(configPath, cfg); err != nil {
+		t.Fatalf("failed to save test config: %v", err)
+	}
+
+	handler := NewSystemHandler(configPath, config.NewRuntimeConfig(cfg))
+
+	r := chi.NewRouter()
+	r.Get("/api/system/config", handler.GetConfig)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/system/config", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Code int           `json:"code"`
+		Data config.Config `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+
+	// secret_key should be masked
+	if resp.Data.Turnstile.SecretKey != "***" {
+		t.Errorf("expected turnstile secret_key to be masked as '***', got %q", resp.Data.Turnstile.SecretKey)
+	}
+
+	// site_key should NOT be masked
+	if resp.Data.Turnstile.SiteKey != "my-site-key" {
+		t.Errorf("expected turnstile site_key to remain 'my-site-key', got %q", resp.Data.Turnstile.SiteKey)
+	}
+}

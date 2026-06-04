@@ -313,3 +313,105 @@ func TestInitHandler_SaveConfig_InvalidJSON(t *testing.T) {
 		t.Errorf("expected status 400, got %d; body: %s", w.Code, w.Body.String())
 	}
 }
+
+// TestInitHandler_SaveConfig_Turnstile_Success tests that Turnstile config is saved
+// and the response masks the secret_key.
+func TestInitHandler_SaveConfig_Turnstile_Success(t *testing.T) {
+	handler, initSvc := setupInitHandler(t)
+
+	// Create admin first
+	_, err := initSvc.CreateAdmin(context.Background(), service.CreateAdminInput{
+		Username: "admin",
+		Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("failed to create admin: %v", err)
+	}
+
+	r := chi.NewRouter()
+	handler.RegisterRoutes(r)
+
+	body := map[string]interface{}{
+		"server": map[string]string{
+			"external_url": "https://ssl.example.com",
+		},
+		"turnstile": map[string]interface{}{
+			"enabled":    true,
+			"site_key":   "site-key-abc",
+			"secret_key": "secret-key-xyz",
+		},
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest(http.MethodPost, "/init/config", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	// Verify response masks secret_key
+	var resp model.SuccessResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	// Extract the data field as config
+	dataBytes, _ := json.Marshal(resp.Data)
+	var cfgResp config.Config
+	if err := json.Unmarshal(dataBytes, &cfgResp); err != nil {
+		t.Fatalf("failed to unmarshal config from response: %v", err)
+	}
+
+	if !cfgResp.Turnstile.Enabled {
+		t.Error("expected turnstile.enabled to be true in response")
+	}
+	if cfgResp.Turnstile.SiteKey != "site-key-abc" {
+		t.Errorf("expected site_key 'site-key-abc', got '%s'", cfgResp.Turnstile.SiteKey)
+	}
+	if cfgResp.Turnstile.SecretKey != "***" {
+		t.Errorf("expected secret_key to be masked as '***', got '%s'", cfgResp.Turnstile.SecretKey)
+	}
+}
+
+// TestInitHandler_SaveConfig_TurnstileEnabled_MissingKeys returns 400.
+func TestInitHandler_SaveConfig_TurnstileEnabled_MissingKeys(t *testing.T) {
+	handler, initSvc := setupInitHandler(t)
+
+	// Create admin first
+	_, err := initSvc.CreateAdmin(context.Background(), service.CreateAdminInput{
+		Username: "admin",
+		Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("failed to create admin: %v", err)
+	}
+
+	r := chi.NewRouter()
+	handler.RegisterRoutes(r)
+
+	body := map[string]interface{}{
+		"server": map[string]string{
+			"external_url": "https://ssl.example.com",
+		},
+		"turnstile": map[string]interface{}{
+			"enabled":    true,
+			"site_key":   "",
+			"secret_key": "",
+		},
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest(http.MethodPost, "/init/config", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status 400, got %d; body: %s", w.Code, w.Body.String())
+	}
+}

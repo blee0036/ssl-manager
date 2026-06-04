@@ -141,6 +141,13 @@ func (h *CertificateHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Set audit info with the newly created certificate ID
+	middleware.SetAuditInfo(r, middleware.AuditInfo{
+		TargetType: "certificate",
+		TargetID:   cert.ID,
+		Operation:  "create_certificate",
+	})
+
 	writeSuccessResponse(w, http.StatusCreated, "certificate created", h.toCertificateResponse(cert))
 }
 
@@ -322,6 +329,13 @@ func (h *CertificateHandler) IssueCertbotCloudflare(w http.ResponseWriter, r *ht
 		return
 	}
 
+	// Set audit info with the newly created certificate ID
+	middleware.SetAuditInfo(r, middleware.AuditInfo{
+		TargetType: "certificate",
+		TargetID:   cert.ID,
+		Operation:  "issue_certificate_cloudflare",
+	})
+
 	writeSuccessResponse(w, http.StatusCreated, "certificate issued via certbot", h.toCertificateResponse(cert))
 }
 
@@ -432,6 +446,13 @@ func (h *CertificateHandler) CompleteManualDNS(w http.ResponseWriter, r *http.Re
 		writeErrorResponse(w, http.StatusInternalServerError, "failed to save issued certificate", err.Error())
 		return
 	}
+
+	// Set audit info with the newly created certificate ID
+	middleware.SetAuditInfo(r, middleware.AuditInfo{
+		TargetType: "certificate",
+		TargetID:   cert.ID,
+		Operation:  "issue_certificate_manual_dns",
+	})
 
 	writeSuccessResponse(w, http.StatusCreated, "certificate issued via manual DNS", h.toCertificateResponse(cert))
 }

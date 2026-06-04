@@ -31,3 +31,13 @@ worker.test.exe
 
 # Review file (generated per-session)
 codex_review.md
+
+# Kiro workspace
+.kiro/
+
+# Temporary files
+.tmp/
+
+# WebUI
+webui/node_modules/
+webui/dist/

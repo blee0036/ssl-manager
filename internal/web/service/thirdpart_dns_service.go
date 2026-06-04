@@ -94,13 +94,18 @@ func (s *ThirdpartDNSService) CreateConfig(ctx context.Context, input model.Crea
 		mainDomains = []string{}
 	}
 
+	enabled := true
+	if input.Enabled != nil {
+		enabled = *input.Enabled
+	}
+
 	config := &model.ThirdpartDNS{
 		Name:        input.Name,
 		Type:        input.Type,
 		APIToken:    input.APIToken,
 		ConfigJSON:  input.ConfigJSON,
 		MainDomains: mainDomains,
-		Enabled:     true,
+		Enabled:     enabled,
 	}
 
 	if config.ConfigJSON == "" {

@@ -200,8 +200,9 @@ func setupTestApp(t *testing.T) *testApp {
 func createLoginHandler(authService *service.AuthService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var input struct {
-			Username string `json:"username"`
-			Password string `json:"password"`
+			Username       string `json:"username"`
+			Password       string `json:"password"`
+			TurnstileToken string `json:"turnstile_token"`
 		}
 
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -212,7 +213,8 @@ func createLoginHandler(authService *service.AuthService) http.HandlerFunc {
 			return
 		}
 
-		token, err := authService.Login(r.Context(), input.Username, input.Password)
+		remoteIP := service.GetBestEffortRemoteIP(r)
+		token, err := authService.Login(r.Context(), input.Username, input.Password, input.TurnstileToken, remoteIP)
 		if err != nil {
 			writeJSON(w, http.StatusUnauthorized, map[string]interface{}{
 				"code":    401,

@@ -8,3 +8,4 @@ data/
 *.test.exe
 codex_review.md
 requirements.md
+webui/node_modules/

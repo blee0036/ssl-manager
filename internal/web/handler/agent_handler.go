@@ -311,6 +311,13 @@ func (h *AgentHandler) CreateDeploymentLog(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Set audit info for the deployment log report
+	middleware.SetAuditInfo(r, middleware.AuditInfo{
+		TargetType: "deployment_log",
+		TargetID:   req.MachineCertificateID,
+		Operation:  "report_deployment",
+	})
+
 	// Send alert if deployment failed
 	if req.Status == "failed" && h.alertSender != nil {
 		alertContent := fmt.Sprintf(

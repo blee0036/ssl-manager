@@ -93,6 +93,13 @@ func (h *UserHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Set audit info with the newly created user ID
+	middleware.SetAuditInfo(r, middleware.AuditInfo{
+		TargetType: "user",
+		TargetID:   user.ID,
+		Operation:  "create_user",
+	})
+
 	writeSuccessResponse(w, http.StatusCreated, "user created", map[string]interface{}{
 		"id":       user.ID,
 		"username": user.Username,
@@ -142,6 +149,13 @@ func (h *UserHandler) Disable(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
 		writeErrorResponse(w, http.StatusBadRequest, "user id is required", "")
+		return
+	}
+
+	// Prevent admin from disabling themselves
+	claims := middleware.GetUserClaims(r.Context())
+	if claims != nil && claims.UserID == id {
+		writeErrorResponse(w, http.StatusBadRequest, "cannot disable your own account", "")
 		return
 	}
 

@@ -19,8 +19,8 @@ var readonlyAllowedEndpoints = []routeRule{
 	{method: "GET", path: "/api/alerts", prefix: true},
 	{method: "GET", path: "/api/audit-logs", prefix: true},
 	{method: "GET", path: "/api/dashboard", prefix: true},
-	{method: "GET", path: "/api/system", prefix: true},
 	{method: "GET", path: "/api/deployment-logs", prefix: true},
+	// 注意：/api/system 已移除 — readonly 不可访问系统配置
 }
 
 // readonlyBlockedEndpoints defines specific endpoints that are blocked even for GET.

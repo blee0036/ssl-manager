@@ -1,4 +1,4 @@
-.PHONY: all build build-web build-agent build-agent-release build-linux build-darwin release clean test lint
+.PHONY: all build build-web build-agent build-agent-release build-linux build-darwin release clean test lint webui-install webui-build webui-dev
 
 # Binary output directory
 BIN_DIR := bin
@@ -19,7 +19,7 @@ CGO_ENABLED := 0
 
 all: build
 
-build: build-web build-agent build-agent-release
+build: webui-build build-web build-agent build-agent-release
 
 build-web:
 	@echo "Building Web Backend..."
@@ -42,6 +42,16 @@ test:
 lint:
 	@echo "Running linter..."
 	golangci-lint run ./...
+
+# WebUI (frontend) targets
+webui-install:
+	pnpm --dir webui install
+
+webui-build:
+	pnpm --dir webui build
+
+webui-dev:
+	pnpm --dir webui dev
 
 # Cross-compile for Linux (primary deployment target)
 build-linux:

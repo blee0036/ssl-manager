@@ -1,0 +1,36 @@
+/**
+ * Mobile responsive styles
+ * Ensures touch targets meet 44x44px minimum on mobile viewports (< 768px)
+ * Requirement 21.3: All interactive elements must have minimum 44x44px touch target
+ */
+@media (max-width: 767px) {
+  /* Ensure buttons have adequate touch target size on mobile */
+  .n-button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  /* Ensure select/input controls have adequate touch target */
+  .n-input,
+  .n-select,
+  .n-switch {
+    min-height: 44px;
+  }
+
+  /* Ensure pagination items are tappable */
+  .n-pagination .n-pagination-item {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  /* Ensure menu items in drawer have adequate touch target */
+  .n-menu-item-content {
+    min-height: 44px;
+  }
+
+  /* Ensure table action buttons maintain touch target in compact layouts */
+  .n-data-table .n-button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}

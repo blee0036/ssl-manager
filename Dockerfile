@@ -1,5 +1,20 @@
 # Multi-stage build for SSL Manager
-# Stage 1: Build Web Backend and Agent
+
+# Stage 1: Build Frontend
+FROM node:20-alpine AS frontend-builder
+
+WORKDIR /app/webui
+RUN corepack enable && corepack prepare pnpm@9 --activate
+
+# Copy package files first for better caching
+COPY webui/package.json webui/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+
+# Copy source and build
+COPY webui/ ./
+RUN pnpm build
+
+# Stage 2: Build Web Backend and Agent
 FROM golang:1.25-alpine AS builder
 
 WORKDIR /src
@@ -17,6 +32,10 @@ RUN go mod download
 # Copy source code
 COPY . .
 
+# Copy frontend build artifacts into the Go build context
+# This is required for //go:embed dist/* in webui/embed.go
+COPY --from=frontend-builder /app/webui/dist ./webui/dist
+
 # Build the Web binary for the target image architecture, and include Agent
 # binaries for all supported target-machine platforms with version injection.
 RUN BUILD_TIME=$(date -u '+%Y-%m-%dT%H:%M:%SZ') && \
@@ -28,7 +47,7 @@ RUN BUILD_TIME=$(date -u '+%Y-%m-%dT%H:%M:%SZ') && \
     CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -buildvcs=false -ldflags="${AGENT_LDFLAGS}" -o /out/ssl-manager-agent-darwin-arm64 ./cmd/agent && \
     echo "${VERSION}" > /out/agent-version.txt
 
-# Stage 2: Runtime image
+# Stage 3: Runtime image
 FROM alpine:3.20
 
 RUN apk add --no-cache \
@@ -49,7 +68,7 @@ COPY --from=builder /out/ssl-manager-agent-darwin-arm64 /app/bin/ssl-manager-age
 COPY --from=builder /out/agent-version.txt /app/bin/agent-version.txt
 
 # Copy web assets (templates and static files are embedded, but keep for reference)
-# The Go binary embeds web/ via embed.FS, so no separate copy needed.
+# The Go binary embeds webui/dist/ via embed.FS, so no separate copy needed.
 
 # Create data directory and certbot working directory (writable by sslmanager)
 RUN mkdir -p /app/data /app/data/certbot /app/data/certbot/work /app/data/certbot/logs /app/bin && \

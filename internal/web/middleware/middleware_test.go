@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -429,6 +430,35 @@ func TestReadonlyMiddleware_BlockedDownload(t *testing.T) {
 	}
 }
 
+func TestReadonlyMiddleware_BlockedSystemEndpoints(t *testing.T) {
+	handler := ReadonlyMiddleware()(okHandler())
+
+	// /api/system/* should be blocked for readonly users (both GET and write methods)
+	tests := []struct {
+		method string
+		path   string
+	}{
+		{"GET", "/api/system/config"},
+		{"PUT", "/api/system/config"},
+		{"GET", "/api/system"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.method+" "+tt.path, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, tt.path, nil)
+			ctx := context.WithValue(req.Context(), UserClaimsKey, &TokenClaims{Role: "readonly"})
+			req = req.WithContext(ctx)
+			rec := httptest.NewRecorder()
+
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusForbidden {
+				t.Errorf("%s %s: expected 403, got %d", tt.method, tt.path, rec.Code)
+			}
+		})
+	}
+}
+
 // --- AuditMiddleware Tests ---
 
 func TestAuditMiddleware_SkipsGET(t *testing.T) {
@@ -484,8 +514,11 @@ func TestAuditMiddleware_LogsPOST(t *testing.T) {
 	if log.IP != "192.168.1.1" {
 		t.Errorf("expected IP '192.168.1.1', got '%s'", log.IP)
 	}
-	if log.Detail != "status:200" {
-		t.Errorf("expected detail 'status:200', got '%s'", log.Detail)
+	if !strings.Contains(log.Detail, `"status":200`) {
+		t.Errorf("expected detail to contain status:200, got '%s'", log.Detail)
+	}
+	if !strings.Contains(log.Detail, `"operation":"create_certificate"`) {
+		t.Errorf("expected detail to contain operation:create_certificate, got '%s'", log.Detail)
 	}
 }
 
@@ -501,6 +534,97 @@ func TestAuditMiddleware_SkipsAuthEndpoints(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if len(repo.logs) != 0 {
 		t.Errorf("expected no audit logs for auth endpoints, got %d", len(repo.logs))
+	}
+}
+
+func TestAuditMiddleware_HandlerOverridesAuditInfo(t *testing.T) {
+	repo := &mockAuditRepo{}
+
+	// Handler that sets explicit audit info (simulating a create handler)
+	innerHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		SetAuditInfo(r, AuditInfo{
+			TargetType: "machine_certificate",
+			TargetID:   "mc-new-123",
+			Operation:  "create_deployment_config",
+		})
+		w.WriteHeader(http.StatusCreated)
+	})
+
+	handler := AuditMiddleware(repo)(innerHandler)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/machines/m-1/certificates", nil)
+	req.RemoteAddr = "10.0.0.1:9999"
+	ctx := context.WithValue(req.Context(), UserClaimsKey, &TokenClaims{
+		UserID:   "user-2",
+		Username: "admin",
+		Role:     "admin",
+	})
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	// Give async goroutine time to complete
+	time.Sleep(50 * time.Millisecond)
+
+	if len(repo.logs) != 1 {
+		t.Fatalf("expected 1 audit log, got %d", len(repo.logs))
+	}
+	log := repo.logs[0]
+	if log.TargetType != "machine_certificate" {
+		t.Errorf("expected target_type 'machine_certificate', got '%s'", log.TargetType)
+	}
+	if log.TargetID != "mc-new-123" {
+		t.Errorf("expected target_id 'mc-new-123', got '%s'", log.TargetID)
+	}
+	if !strings.Contains(log.Detail, `"operation":"create_deployment_config"`) {
+		t.Errorf("expected detail to contain operation:create_deployment_config, got '%s'", log.Detail)
+	}
+}
+
+func TestAuditMiddleware_AgentDeploymentLog(t *testing.T) {
+	repo := &mockAuditRepo{}
+
+	// Handler that sets audit info for agent deployment log
+	innerHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		SetAuditInfo(r, AuditInfo{
+			TargetType: "deployment_log",
+			TargetID:   "mc-456",
+			Operation:  "report_deployment",
+		})
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler := AuditMiddleware(repo)(innerHandler)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/agent/deployment-logs", nil)
+	req.RemoteAddr = "172.16.0.5:8080"
+	ctx := context.WithValue(req.Context(), MachineKey, &model.Machine{ID: "machine-abc", Name: "web-server-1"})
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	time.Sleep(50 * time.Millisecond)
+
+	if len(repo.logs) != 1 {
+		t.Fatalf("expected 1 audit log, got %d", len(repo.logs))
+	}
+	log := repo.logs[0]
+	if log.ActorType != "agent" {
+		t.Errorf("expected actor_type 'agent', got '%s'", log.ActorType)
+	}
+	if log.ActorID != "machine-abc" {
+		t.Errorf("expected actor_id 'machine-abc', got '%s'", log.ActorID)
+	}
+	if log.TargetType != "deployment_log" {
+		t.Errorf("expected target_type 'deployment_log', got '%s'", log.TargetType)
+	}
+	if log.TargetID != "mc-456" {
+		t.Errorf("expected target_id 'mc-456', got '%s'", log.TargetID)
+	}
+	if !strings.Contains(log.Detail, `"operation":"report_deployment"`) {
+		t.Errorf("expected detail to contain operation:report_deployment, got '%s'", log.Detail)
 	}
 }
 
@@ -671,6 +795,14 @@ func TestExtractTargetFromPath(t *testing.T) {
 		{"/api/users/user-1", "user", "user-1"},
 		{"/api/certificates", "certificate", ""},
 		{"/api/thirdpart-dns/dns-1", "thirdpart_dns", "dns-1"},
+		// Nested resource: POST /api/machines/{id}/certificates (create deployment config)
+		{"/api/machines/m-1/certificates", "machine_certificate", ""},
+		// Nested resource: PUT/DELETE /api/machines/{id}/certificates/{mc_id}
+		{"/api/machines/m-1/certificates/mc-1", "machine_certificate", "mc-1"},
+		// Nested resource: POST /api/machines/{id}/certificates/{mc_id}/deploy
+		{"/api/machines/m-1/certificates/mc-1/deploy", "machine_certificate", "mc-1"},
+		// Agent deployment logs
+		{"/api/agent/deployment-logs", "deployment_log", ""},
 	}
 
 	for _, tt := range tests {

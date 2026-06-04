@@ -133,6 +133,7 @@ type CreateThirdpartDNSInput struct {
 	APIToken    string   `json:"api_token"`
 	ConfigJSON  string   `json:"config_json"`
 	MainDomains []string `json:"main_domains"`
+	Enabled     *bool    `json:"enabled,omitempty"`
 }
 
 // UpdateThirdpartDNSInput 更新第三方 DNS 上游配置输入

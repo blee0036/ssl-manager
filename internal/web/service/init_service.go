@@ -139,6 +139,7 @@ type SaveConfigInput struct {
 	Certbot       *config.CertbotConfig       `json:"certbot,omitempty"`
 	Readonly      *config.ReadonlyConfig      `json:"readonly,omitempty"`
 	DomainMonitor *config.DomainMonitorConfig `json:"domain_monitor,omitempty"`
+	Turnstile     *config.TurnstileConfig     `json:"turnstile,omitempty"`
 }
 
 // SaveConfig saves the system configuration to config.json during initialization.
@@ -213,6 +214,12 @@ func (s *InitService) SaveConfig(ctx context.Context, input SaveConfigInput) (*c
 		if input.DomainMonitor.IntervalMinutes > 0 {
 			cfg.DomainMonitor.IntervalMinutes = input.DomainMonitor.IntervalMinutes
 		}
+	}
+
+	if input.Turnstile != nil {
+		cfg.Turnstile.Enabled = input.Turnstile.Enabled
+		cfg.Turnstile.SiteKey = input.Turnstile.SiteKey
+		cfg.Turnstile.SecretKey = input.Turnstile.SecretKey
 	}
 
 	// Save config to file
