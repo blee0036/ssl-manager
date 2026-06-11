@@ -1,7 +1,6 @@
 import axios from 'axios';
 import type { AxiosInstance, InternalAxiosRequestConfig } from 'axios';
 import { useAuthStore } from '@/store/modules/auth';
-import type { RequestConfig } from './type';
 
 // ============================================================
 // Pending request management (AbortController)
@@ -163,49 +162,29 @@ instance.interceptors.response.use(
       removePendingRequest(error.config);
     }
 
-    // 被取消的请求不做错误处理
+    // 1. cancel error 最先处理，直接 reject
     if (axios.isCancel(error)) {
       return Promise.reject(error);
     }
 
-    const status = error.response?.status;
-    const requestUrl = error.config?.url;
-    const skipNotify = (error.config as RequestConfig)?.skipErrorNotify;
-
-    if (status === 401 && !isAuthEndpoint(requestUrl)) {
-      // 受保护 API 返回 401 → 清除 token，取消待处理请求，跳转 /login
+    // 2. 401 始终由全局处理（清 token + 跳登录），完全不受 skipErrorNotify 影响
+    if (error.response?.status === 401 && !isAuthEndpoint(error.config?.url)) {
       handleUnauthorized();
-    } else if (status === 403 && !isAuthEndpoint(requestUrl)) {
-      // 受保护 API 返回 403 → 显示权限拒绝通知
-      if (!skipNotify) {
-        console.warn('[API] 权限拒绝:', requestUrl);
-        // 通知将由调用方或全局消息组件处理
-        // 这里使用 window.dispatchEvent 发送自定义事件，供 App 层监听
-        window.dispatchEvent(
-          new CustomEvent('api:error', {
-            detail: { type: 'forbidden', message: '权限不足，无法执行此操作', url: requestUrl },
-          })
-        );
-      }
-    } else if (status && status >= 500) {
-      // 500+ 服务器错误 → 显示通用错误通知
-      if (!skipNotify) {
-        console.error('[API] 服务器错误:', status, requestUrl);
-        window.dispatchEvent(
-          new CustomEvent('api:error', {
-            detail: { type: 'server', message: '服务器错误，请稍后重试', url: requestUrl },
-          })
-        );
-      }
-    } else if (!error.response && !skipNotify) {
-      // 网络错误（无 response）
-      console.error('[API] 网络错误:', requestUrl);
-      window.dispatchEvent(
-        new CustomEvent('api:error', {
-          detail: { type: 'network', message: '网络连接失败，请检查网络', url: requestUrl },
-        })
-      );
+      return Promise.reject(error);
     }
+
+    // 3. skipErrorNotify: true 时跳过后续全局通知，由局部 catch 自行处理
+    if (error.config?.skipErrorNotify) {
+      return Promise.reject(error);
+    }
+
+    // 4. 其他错误（403/500/network）：仅对未设 skipErrorNotify 的请求派发全局通知
+    const msg = error.response?.data?.detail || error.response?.data?.message || '请求失败';
+    window.dispatchEvent(
+      new CustomEvent('api:error', {
+        detail: { message: msg, status: error.response?.status },
+      })
+    );
 
     return Promise.reject(error);
   }

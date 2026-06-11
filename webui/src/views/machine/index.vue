@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, reactive } from 'vue';
 import { useRouter } from 'vue-router';
 import { NCard, NSpace, NButton, NIcon, NResult, useMessage } from 'naive-ui';
 import { RefreshOutline } from '@vicons/ionicons5';
@@ -10,9 +10,15 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue';
 import EmptyState from '@/components/common/EmptyState.vue';
 import { useTable } from '@/hooks/useTable';
 import { fetchMachines, deleteMachine, regenerateToken, revokeToken } from '@/service/api/machine';
+import { getApiErrorMessage } from '@/utils/error';
 
 const message = useMessage();
 const router = useRouter();
+
+// Per-row loading Sets
+const deletingIds = reactive(new Set<string>());
+const regeneratingIds = reactive(new Set<string>());
+const revokingIds = reactive(new Set<string>());
 
 // Table
 const { data, loading, error, pagination, refresh } = useTable<Api.Machine>({
@@ -45,16 +51,19 @@ function handleDeleteClick(machine: Api.Machine) {
 
 async function handleDeleteConfirm() {
   if (!deletingMachine.value) return;
+  const id = deletingMachine.value.id;
   deleteLoading.value = true;
+  deletingIds.add(id);
   try {
-    await deleteMachine(deletingMachine.value.id);
+    await deleteMachine(id);
     message.success('机器已删除');
     showDeleteConfirm.value = false;
     refresh();
-  } catch {
-    message.error('删除失败');
+  } catch (err: unknown) {
+    message.error(getApiErrorMessage(err, '删除失败'));
   } finally {
     deleteLoading.value = false;
+    deletingIds.delete(id);
   }
 }
 
@@ -70,17 +79,20 @@ function handleRegenerateClick(machine: Api.Machine) {
 
 async function handleRegenerateConfirm() {
   if (!regeneratingMachine.value) return;
+  const id = regeneratingMachine.value.id;
   regenerateLoading.value = true;
+  regeneratingIds.add(id);
   try {
-    const result = await regenerateToken(regeneratingMachine.value.id);
+    const result = await regenerateToken(id);
     message.success('Token 已重新生成');
     showRegenerateConfirm.value = false;
     installCommand.value = result.install_command;
     showInstallDialog.value = true;
-  } catch {
-    message.error('重生成 Token 失败');
+  } catch (err: unknown) {
+    message.error(getApiErrorMessage(err, '重生成 Token 失败'));
   } finally {
     regenerateLoading.value = false;
+    regeneratingIds.delete(id);
   }
 }
 
@@ -100,16 +112,19 @@ function handleRevokeClick(machine: Api.Machine) {
 
 async function handleRevokeConfirm() {
   if (!revokingMachine.value) return;
+  const id = revokingMachine.value.id;
   revokeLoading.value = true;
+  revokingIds.add(id);
   try {
-    await revokeToken(revokingMachine.value.id);
+    await revokeToken(id);
     message.success('Token 已吊销');
     showRevokeConfirm.value = false;
     refresh();
-  } catch {
-    message.error('吊销 Token 失败');
+  } catch (err: unknown) {
+    message.error(getApiErrorMessage(err, '吊销 Token 失败'));
   } finally {
     revokeLoading.value = false;
+    revokingIds.delete(id);
   }
 }
 </script>
@@ -152,6 +167,9 @@ async function handleRevokeConfirm() {
         :data="data"
         :loading="loading"
         :pagination="pagination"
+        :deleting-ids="deletingIds"
+        :regenerating-ids="regeneratingIds"
+        :revoking-ids="revokingIds"
         @delete="handleDeleteClick"
         @regenerate="handleRegenerateClick"
         @revoke="handleRevokeClick"

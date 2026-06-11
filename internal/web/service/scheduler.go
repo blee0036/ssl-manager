@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -18,6 +19,7 @@ import (
 type AlertSender interface {
 	SendAlert(ctx context.Context, level, alertType, title, content, targetType, targetID string) error
 	AutoResolve(ctx context.Context, targetType, targetID, alertType string)
+	SuppressActiveByTarget(ctx context.Context, targetType, targetID string) error
 }
 
 // CertbotRenewer is an interface for issuing certificates via Certbot.
@@ -40,11 +42,23 @@ type SchedulerService struct {
 	// Domain monitoring
 	domainMonitorService *DomainMonitorService
 
+	// DNS sync dependencies (NEW)
+	thirdpartDNSService *ThirdpartDNSService
+	dnsRepo             *repository.ThirdpartDNSRepository
+
 	// Scheduler control
 	mu       sync.Mutex
 	running  bool
+	stopping bool // prevents Start during Stop/Wait overlap
 	stopCh   chan struct{}
 	wg       sync.WaitGroup
+
+	// Child context for graceful cancellation of long-running tasks (DNS sync)
+	childCtx    context.Context
+	childCancel context.CancelFunc
+
+	// DNS sync trigger channel: capacity 1, coalesces multiple ticks
+	dnsSyncTrigger chan struct{}
 
 	// Retry configuration
 	MaxRetries    int
@@ -79,25 +93,43 @@ func (s *SchedulerService) SetDomainMonitorService(svc *DomainMonitorService) {
 	s.domainMonitorService = svc
 }
 
+// SetThirdpartDNSService sets the thirdpart DNS service and repo for periodic sync.
+func (s *SchedulerService) SetThirdpartDNSService(svc *ThirdpartDNSService, repo *repository.ThirdpartDNSRepository) {
+	s.thirdpartDNSService = svc
+	s.dnsRepo = repo
+}
+
 // Start begins the scheduler's periodic execution loop.
 func (s *SchedulerService) Start(ctx context.Context) error {
 	s.mu.Lock()
-	if s.running {
+	if s.running || s.stopping {
 		s.mu.Unlock()
-		return nil // Already running, no-op
+		return nil // Already running or previous Stop still in progress
 	}
 	s.running = true
-	s.stopCh = make(chan struct{})
+
+	// Create immutable channels for this run cycle
+	stopCh := make(chan struct{})
+	trigger := make(chan struct{}, 1)
+	s.stopCh = stopCh
+	s.dnsSyncTrigger = trigger
+
+	// Create child context for cancellation of long-running sub-tasks
+	s.childCtx, s.childCancel = context.WithCancel(ctx)
+
+	// wg.Add(2): main run loop + DNS worker goroutine
+	s.wg.Add(2)
 	s.mu.Unlock()
 
-	s.wg.Add(1)
-	go s.run(ctx)
+	// Pass channels as immutable parameters so goroutines don't read mutable struct fields
+	go s.run(s.childCtx, stopCh, trigger)
+	go s.dnsWorker(s.childCtx, stopCh, trigger)
 
 	log.Println("[Scheduler] Started")
 	return nil
 }
 
-// Stop stops the scheduler and waits for the current cycle to finish.
+// Stop stops the scheduler and waits for all goroutines to finish.
 func (s *SchedulerService) Stop() error {
 	s.mu.Lock()
 	if !s.running {
@@ -105,10 +137,24 @@ func (s *SchedulerService) Stop() error {
 		return nil // Already stopped, no-op
 	}
 	s.running = false
+	s.stopping = true
+
+	// 1. Cancel child context to signal long-running tasks (DNS sync) to abort
+	if s.childCancel != nil {
+		s.childCancel()
+	}
+	// 2. Close stopCh to exit select loops
 	close(s.stopCh)
 	s.mu.Unlock()
 
+	// 3. Wait for both goroutines (main run loop + DNS worker) to exit
 	s.wg.Wait()
+
+	// 4. Clear stopping flag
+	s.mu.Lock()
+	s.stopping = false
+	s.mu.Unlock()
+
 	log.Println("[Scheduler] Stopped")
 	return nil
 }
@@ -122,7 +168,8 @@ func (s *SchedulerService) IsRunning() bool {
 
 // run is the main scheduler loop that periodically checks renewals,
 // heartbeat timeouts, and domain monitoring.
-func (s *SchedulerService) run(ctx context.Context) {
+// Channels are passed as immutable parameters to avoid reading mutable struct fields.
+func (s *SchedulerService) run(ctx context.Context, stopCh <-chan struct{}, dnsSyncTrigger chan<- struct{}) {
 	defer s.wg.Done()
 
 	// Run immediately on start
@@ -156,9 +203,23 @@ func (s *SchedulerService) run(ctx context.Context) {
 	domainMonitorTicker := time.NewTicker(domainMonitorInterval)
 	defer domainMonitorTicker.Stop()
 
+	// DNS sync ticker — nil means disabled
+	var currentDNSTicker *time.Ticker
+	var dnsSyncC <-chan time.Time
+	currentDNSInterval := s.runtimeCfg.Get().ThirdpartDNS.SyncIntervalMinutes
+	if currentDNSInterval > 0 {
+		currentDNSTicker = time.NewTicker(time.Duration(currentDNSInterval) * time.Minute)
+		dnsSyncC = currentDNSTicker.C
+	}
+	defer func() {
+		if currentDNSTicker != nil {
+			currentDNSTicker.Stop()
+		}
+	}()
+
 	for {
 		select {
-		case <-s.stopCh:
+		case <-stopCh:
 			return
 		case <-ctx.Done():
 			return
@@ -170,6 +231,8 @@ func (s *SchedulerService) run(ctx context.Context) {
 			if err := s.CheckHeartbeatTimeouts(ctx); err != nil {
 				log.Printf("[Scheduler] CheckHeartbeatTimeouts error: %v", err)
 			}
+			// Piggyback on heartbeat tick (30s) to check DNS interval config changes
+			s.checkDNSIntervalChange(&currentDNSTicker, &dnsSyncC, &currentDNSInterval)
 		case <-domainMonitorTicker.C:
 			if err := s.RunDomainMonitor(ctx); err != nil {
 				log.Printf("[Scheduler] RunDomainMonitor error: %v", err)
@@ -180,6 +243,94 @@ func (s *SchedulerService) run(ctx context.Context) {
 				domainMonitorTicker.Stop()
 				currentDomainInterval = newInterval
 				domainMonitorTicker = time.NewTicker(time.Duration(currentDomainInterval) * time.Minute)
+			}
+		case <-dnsSyncC:
+			// Non-blocking send to trigger channel; if worker is busy, coalesce
+			select {
+			case dnsSyncTrigger <- struct{}{}:
+			default:
+				log.Println("[Scheduler] DNS sync trigger coalesced (worker busy)")
+			}
+		}
+	}
+}
+
+// checkDNSIntervalChange checks if the DNS sync interval config has changed.
+// Handles 0→positive (enable), positive→0 (disable), and positive→positive (reschedule).
+func (s *SchedulerService) checkDNSIntervalChange(
+	currentDNSTicker **time.Ticker,
+	dnsSyncC *<-chan time.Time,
+	currentDNSInterval *int,
+) {
+	newInterval := s.runtimeCfg.Get().ThirdpartDNS.SyncIntervalMinutes
+	if newInterval == *currentDNSInterval {
+		return // no change
+	}
+
+	// Stop old ticker first
+	if *currentDNSTicker != nil {
+		(*currentDNSTicker).Stop()
+		*currentDNSTicker = nil
+		*dnsSyncC = nil
+	}
+
+	*currentDNSInterval = newInterval
+
+	if newInterval > 0 {
+		// Create new ticker
+		*currentDNSTicker = time.NewTicker(time.Duration(newInterval) * time.Minute)
+		*dnsSyncC = (*currentDNSTicker).C
+		log.Printf("[Scheduler] DNS sync interval changed to %d minutes", newInterval)
+	} else {
+		log.Println("[Scheduler] DNS sync disabled (interval <= 0)")
+	}
+}
+
+// dnsWorker is a long-running goroutine that listens on the trigger channel.
+// Each trigger causes a serial execution of runDNSSyncAll.
+// Exits on ctx.Done() or stopCh.
+func (s *SchedulerService) dnsWorker(ctx context.Context, stopCh <-chan struct{}, trigger <-chan struct{}) {
+	defer s.wg.Done()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-stopCh:
+			return
+		case <-trigger:
+			s.runDNSSyncAll(ctx)
+		}
+	}
+}
+
+// runDNSSyncAll syncs all enabled thirdpart DNS configs.
+// Accepts ctx to support cancellation. Processes configs serially.
+func (s *SchedulerService) runDNSSyncAll(ctx context.Context) {
+	if s.thirdpartDNSService == nil || s.dnsRepo == nil {
+		return
+	}
+	configs, err := s.dnsRepo.List(ctx)
+	if err != nil {
+		log.Printf("[Scheduler] Failed to list DNS configs for sync: %v", err)
+		return
+	}
+	for _, cfg := range configs {
+		// Check if context is cancelled (graceful shutdown)
+		select {
+		case <-ctx.Done():
+			log.Println("[Scheduler] DNS sync cancelled by context")
+			return
+		default:
+		}
+		if !cfg.Enabled {
+			continue
+		}
+		if _, err := s.thirdpartDNSService.SyncRecords(ctx, cfg.ID); err != nil {
+			if errors.Is(err, ErrSyncInProgress) {
+				log.Printf("[Scheduler] DNS sync for config %s (%s): skipped (already in progress)", cfg.Name, cfg.ID)
+			} else {
+				log.Printf("[Scheduler] DNS sync for config %s (%s): %v", cfg.Name, cfg.ID, err)
 			}
 		}
 	}

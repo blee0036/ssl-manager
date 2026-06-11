@@ -114,6 +114,7 @@ type UpdateDomainInput struct {
 	LinkedCertificateID        *string `json:"linked_certificate_id,omitempty"`
 	LinkedMachineCertificateID *string `json:"linked_machine_certificate_id,omitempty"`
 	MonitorEnabled             *bool   `json:"monitor_enabled,omitempty"`
+	AlertIgnored               *bool   `json:"alert_ignored,omitempty"`
 }
 
 // DomainFilter 域名过滤条件
@@ -122,6 +123,25 @@ type DomainFilter struct {
 	Source         string `json:"source,omitempty"`
 	MonitorEnabled *bool  `json:"monitor_enabled,omitempty"`
 	ThirdpartDNSID string `json:"thirdpart_dns_id,omitempty"`
+}
+
+// DomainListParams 域名列表查询参数（含筛选、排序、分页）
+type DomainListParams struct {
+	// Filtering
+	Name           string `json:"name,omitempty"`
+	Source         string `json:"source,omitempty"`
+	ThirdpartDNSID string `json:"thirdpart_dns_id,omitempty"`
+	MonitorEnabled *bool  `json:"monitor_enabled,omitempty"`
+	AlertIgnored   *bool  `json:"alert_ignored,omitempty"`
+	FilterStatus   string `json:"filter_status,omitempty"`
+
+	// Sorting
+	SortBy    string `json:"sort_by,omitempty"`
+	SortOrder string `json:"sort_order,omitempty"`
+
+	// Pagination
+	Page    int `json:"page,omitempty"`
+	PerPage int `json:"per_page,omitempty"`
 }
 
 // === 第三方 DNS 上游相关 ===

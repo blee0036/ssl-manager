@@ -32,6 +32,7 @@ func setupDomainTestDB(t *testing.T) *sql.DB {
 		name TEXT NOT NULL,
 		source TEXT DEFAULT 'manual' CHECK(source IN ('manual', 'certificate', 'cloudflare')),
 		thirdpart_dns_id TEXT DEFAULT '',
+		dns_record_id TEXT DEFAULT '',
 		dns_record_type TEXT DEFAULT '',
 		dns_record_value TEXT DEFAULT '',
 		monitor_port INTEGER NOT NULL DEFAULT 443,
@@ -39,6 +40,7 @@ func setupDomainTestDB(t *testing.T) *sql.DB {
 		linked_certificate_id TEXT,
 		linked_machine_certificate_id TEXT,
 		monitor_enabled INTEGER NOT NULL DEFAULT 1,
+		alert_ignored INTEGER NOT NULL DEFAULT 0,
 		created_at TEXT NOT NULL,
 		updated_at TEXT NOT NULL
 	)`)
@@ -167,12 +169,25 @@ func TestDomainHandler_List_Empty(t *testing.T) {
 		t.Errorf("expected response code 200, got %d", resp.Code)
 	}
 
-	data, ok := resp.Data.([]interface{})
+	dataMap, ok := resp.Data.(map[string]interface{})
 	if !ok {
-		t.Fatalf("expected data to be an array, got %T", resp.Data)
+		t.Fatalf("expected data to be an object, got %T", resp.Data)
 	}
-	if len(data) != 0 {
-		t.Errorf("expected empty array, got %d items", len(data))
+	items, ok := dataMap["items"].([]interface{})
+	if !ok {
+		t.Fatalf("expected items to be an array, got %T", dataMap["items"])
+	}
+	if len(items) != 0 {
+		t.Errorf("expected empty items array, got %d items", len(items))
+	}
+	if total, ok := dataMap["total"].(float64); !ok || int(total) != 0 {
+		t.Errorf("expected total 0, got %v", dataMap["total"])
+	}
+	if page, ok := dataMap["page"].(float64); !ok || int(page) != 1 {
+		t.Errorf("expected page 1, got %v", dataMap["page"])
+	}
+	if perPage, ok := dataMap["per_page"].(float64); !ok || int(perPage) != 50 {
+		t.Errorf("expected per_page 50, got %v", dataMap["per_page"])
 	}
 }
 
@@ -195,12 +210,25 @@ func TestDomainHandler_List_WithDomains(t *testing.T) {
 		t.Fatalf("failed to unmarshal response: %v", err)
 	}
 
-	data, ok := resp.Data.([]interface{})
+	dataMap, ok := resp.Data.(map[string]interface{})
 	if !ok {
-		t.Fatalf("expected data to be an array, got %T", resp.Data)
+		t.Fatalf("expected data to be an object, got %T", resp.Data)
 	}
-	if len(data) != 2 {
-		t.Errorf("expected 2 items, got %d", len(data))
+	items, ok := dataMap["items"].([]interface{})
+	if !ok {
+		t.Fatalf("expected items to be an array, got %T", dataMap["items"])
+	}
+	if len(items) != 2 {
+		t.Errorf("expected 2 items, got %d", len(items))
+	}
+	if total, ok := dataMap["total"].(float64); !ok || int(total) != 2 {
+		t.Errorf("expected total 2, got %v", dataMap["total"])
+	}
+	if page, ok := dataMap["page"].(float64); !ok || int(page) != 1 {
+		t.Errorf("expected page 1, got %v", dataMap["page"])
+	}
+	if perPage, ok := dataMap["per_page"].(float64); !ok || int(perPage) != 50 {
+		t.Errorf("expected per_page 50, got %v", dataMap["per_page"])
 	}
 }
 
@@ -238,12 +266,19 @@ func TestDomainHandler_List_WithFilter(t *testing.T) {
 		t.Fatalf("failed to unmarshal response: %v", err)
 	}
 
-	data, ok := resp.Data.([]interface{})
+	dataMap, ok := resp.Data.(map[string]interface{})
 	if !ok {
-		t.Fatalf("expected data to be an array, got %T", resp.Data)
+		t.Fatalf("expected data to be an object, got %T", resp.Data)
 	}
-	if len(data) != 1 {
-		t.Errorf("expected 1 item (only enabled), got %d", len(data))
+	items, ok := dataMap["items"].([]interface{})
+	if !ok {
+		t.Fatalf("expected items to be an array, got %T", dataMap["items"])
+	}
+	if len(items) != 1 {
+		t.Errorf("expected 1 item (only enabled), got %d", len(items))
+	}
+	if total, ok := dataMap["total"].(float64); !ok || int(total) != 1 {
+		t.Errorf("expected total 1, got %v", dataMap["total"])
 	}
 }
 

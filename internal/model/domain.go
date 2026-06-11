@@ -15,6 +15,8 @@ type Domain struct {
 	LinkedCertificateID        string    `json:"linked_certificate_id,omitempty"`
 	LinkedMachineCertificateID string    `json:"linked_machine_certificate_id,omitempty"`
 	MonitorEnabled             bool      `json:"monitor_enabled"`
+	AlertIgnored               bool      `json:"alert_ignored"`
+	DNSRecordID                string    `json:"dns_record_id"`
 	CreatedAt                  time.Time `json:"created_at"`
 	UpdatedAt                  time.Time `json:"updated_at"`
 }

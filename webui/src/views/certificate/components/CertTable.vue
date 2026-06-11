@@ -9,13 +9,16 @@ import { usePermission } from '@/hooks/usePermission';
 interface Props {
   data: Api.Certificate[];
   loading: boolean;
+  deletingIds?: Set<string>;
 }
 
 interface Emits {
   (e: 'delete', row: Api.Certificate): void;
 }
 
-const props = defineProps<Props>();
+const props = withDefaults(defineProps<Props>(), {
+  deletingIds: () => new Set<string>(),
+});
 const emit = defineEmits<Emits>();
 
 const { canWrite } = usePermission();
@@ -47,12 +50,16 @@ const columns = computed<DataTableColumns<Api.Certificate>>(() => {
       title: '名称',
       key: 'name',
       ellipsis: { tooltip: true },
+      resizable: true,
       minWidth: 120,
+      width: 160,
     },
     {
       title: '域名',
       key: 'domains',
-      minWidth: 200,
+      resizable: true,
+      minWidth: 250,
+      width: 280,
       render(row) {
         return h(NSpace, { size: 4, wrap: true }, () =>
           row.domains.map((domain) =>
@@ -139,6 +146,7 @@ const columns = computed<DataTableColumns<Api.Certificate>>(() => {
       width: 80,
       fixed: 'right',
       render(row) {
+        const isDeleting = props.deletingIds.has(row.id);
         return h(NSpace, { size: 8 }, () => [
           h(
             NTooltip,
@@ -151,6 +159,8 @@ const columns = computed<DataTableColumns<Api.Certificate>>(() => {
                     size: 'small',
                     quaternary: true,
                     type: 'error',
+                    loading: isDeleting,
+                    disabled: isDeleting,
                     onClick: () => emit('delete', row),
                   },
                   {

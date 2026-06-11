@@ -136,6 +136,7 @@ func (c *Client) ListDNSRecords(ctx context.Context, token string, zoneID string
 			var result struct {
 				Success bool `json:"success"`
 				Result  []struct {
+					ID      string `json:"id"`
 					Name    string `json:"name"`
 					Type    string `json:"type"`
 					Content string `json:"content"`
@@ -156,7 +157,11 @@ func (c *Client) ListDNSRecords(ctx context.Context, token string, zoneID string
 			}
 
 			for _, r := range result.Result {
+				if r.ID == "" {
+					return nil, fmt.Errorf("cloudflare returned DNS record with empty ID for zone %s", zoneID)
+				}
 				allRecords = append(allRecords, service.DNSRecord{
+					ID:    r.ID,
 					Name:  r.Name,
 					Type:  r.Type,
 					Value: r.Content,

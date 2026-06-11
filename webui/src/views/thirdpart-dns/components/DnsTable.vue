@@ -9,6 +9,9 @@ interface Props {
   data: Api.ThirdpartDns[];
   loading: boolean;
   pagination: object;
+  syncingIds?: Set<string>;
+  deletingIds?: Set<string>;
+  togglingIds?: Set<string>;
 }
 
 interface Emits {
@@ -19,126 +22,139 @@ interface Emits {
   (e: 'toggleEnabled', item: Api.ThirdpartDns, enabled: boolean): void;
 }
 
-defineProps<Props>();
+const props = defineProps<Props>();
 const emit = defineEmits<Emits>();
 
 const { canWrite } = usePermission();
 
-const columns: DataTableColumns<Api.ThirdpartDns> = [
-  {
-    title: '名称',
-    key: 'name',
-    ellipsis: { tooltip: true },
-  },
-  {
-    title: '类型',
-    key: 'type',
-    width: 120,
-    render(row) {
-      return h(NTag, { size: 'small', type: 'info', bordered: false }, { default: () => row.type });
+function createColumns(): DataTableColumns<Api.ThirdpartDns> {
+  return [
+    {
+      title: '名称',
+      key: 'name',
+      ellipsis: { tooltip: true },
     },
-  },
-  {
-    title: '主域名',
-    key: 'main_domains',
-    render(row) {
-      if (!row.main_domains || row.main_domains.length === 0) return '-';
-      return h(
-        NSpace,
-        { size: 'small', wrap: true },
-        {
-          default: () =>
-            row.main_domains.map((domain) =>
-              h(NTag, { size: 'small', bordered: false }, { default: () => domain })
-            ),
-        }
-      );
+    {
+      title: '类型',
+      key: 'type',
+      width: 120,
+      render(row) {
+        return h(NTag, { size: 'small', type: 'info', bordered: false }, { default: () => row.type });
+      },
     },
-  },
-  {
-    title: '启用',
-    key: 'enabled',
-    width: 80,
-    render(row) {
-      return h(NSwitch, {
-        value: row.enabled,
-        disabled: !canWrite(),
-        onUpdateValue: (val: boolean) => emit('toggleEnabled', row, val),
-      });
-    },
-  },
-  {
-    title: '创建时间',
-    key: 'created_at',
-    width: 180,
-    render(row) {
-      return row.created_at ? formatDateTime(row.created_at) : '-';
-    },
-  },
-  {
-    title: '操作',
-    key: 'actions',
-    width: 280,
-    render(row) {
-      const buttons = [
-        h(
-          NButton,
+    {
+      title: '主域名',
+      key: 'main_domains',
+      render(row) {
+        if (!row.main_domains || row.main_domains.length === 0) return '-';
+        return h(
+          NSpace,
+          { size: 'small', wrap: true },
           {
-            size: 'small',
-            type: 'info',
-            quaternary: true,
-            onClick: () => emit('viewLogs', row),
-          },
-          { default: () => '同步日志' }
-        ),
-      ];
-
-      if (canWrite()) {
-        buttons.unshift(
-          h(
-            NButton,
-            {
-              size: 'small',
-              type: 'primary',
-              quaternary: true,
-              onClick: () => emit('sync', row),
-            },
-            { default: () => '同步' }
-          )
+            default: () =>
+              row.main_domains.map((domain) =>
+                h(NTag, { size: 'small', bordered: false }, { default: () => domain })
+              ),
+          }
         );
-        buttons.push(
-          h(
-            NButton,
-            {
-              size: 'small',
-              type: 'warning',
-              quaternary: true,
-              onClick: () => emit('edit', row),
-            },
-            { default: () => '编辑' }
-          ),
-          h(
-            NButton,
-            {
-              size: 'small',
-              type: 'error',
-              quaternary: true,
-              onClick: () => emit('delete', row),
-            },
-            { default: () => '删除' }
-          )
-        );
-      }
-
-      return h(NSpace, { size: 'small' }, { default: () => buttons });
+      },
     },
-  },
-];
+    {
+      title: '启用',
+      key: 'enabled',
+      width: 80,
+      render(row) {
+        const isToggling = props.togglingIds?.has(row.id) ?? false;
+        return h(NSwitch, {
+          value: row.enabled,
+          disabled: !canWrite() || isToggling,
+          loading: isToggling,
+          onUpdateValue: (val: boolean) => emit('toggleEnabled', row, val),
+        });
+      },
+    },
+    {
+      title: '创建时间',
+      key: 'created_at',
+      width: 180,
+      render(row) {
+        return row.created_at ? formatDateTime(row.created_at) : '-';
+      },
+    },
+    {
+      title: '操作',
+      key: 'actions',
+      width: 280,
+      render(row) {
+        const isSyncing = props.syncingIds?.has(row.id) ?? false;
+        const isDeleting = props.deletingIds?.has(row.id) ?? false;
+        const isAnyRowBusy = isSyncing || isDeleting;
+
+        const buttons = [
+          h(
+            NButton,
+            {
+              size: 'small',
+              type: 'info',
+              quaternary: true,
+              onClick: () => emit('viewLogs', row),
+            },
+            { default: () => '同步日志' }
+          ),
+        ];
+
+        if (canWrite()) {
+          buttons.unshift(
+            h(
+              NButton,
+              {
+                size: 'small',
+                type: 'primary',
+                quaternary: true,
+                loading: isSyncing,
+                disabled: isAnyRowBusy,
+                onClick: () => emit('sync', row),
+              },
+              { default: () => '同步' }
+            )
+          );
+          buttons.push(
+            h(
+              NButton,
+              {
+                size: 'small',
+                type: 'warning',
+                quaternary: true,
+                disabled: isAnyRowBusy,
+                onClick: () => emit('edit', row),
+              },
+              { default: () => '编辑' }
+            ),
+            h(
+              NButton,
+              {
+                size: 'small',
+                type: 'error',
+                quaternary: true,
+                loading: isDeleting,
+                disabled: isAnyRowBusy,
+                onClick: () => emit('delete', row),
+              },
+              { default: () => '删除' }
+            )
+          );
+        }
+
+        return h(NSpace, { size: 'small' }, { default: () => buttons });
+      },
+    },
+  ];
+}
 </script>
 
 <template>
   <NDataTable
-    :columns="columns"
+    :columns="createColumns()"
     :data="data"
     :loading="loading"
     :pagination="pagination"

@@ -5,11 +5,40 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/ssl-manager/ssl-manager/internal/model"
 )
+
+// filterStatusPredicates 定义每个 filter_status 值对应的 SQL 条件。
+// 所有条件假设 d 为 domains 别名，dmr 为 LEFT JOIN latest domain_monitor_results 别名。
+var filterStatusPredicates = map[string]string{
+	"enabled":      "d.monitor_enabled = 1",
+	"disabled":     "d.monitor_enabled = 0",
+	"ignored":      "d.alert_ignored = 1",
+	"tls_ok":       "dmr.id IS NOT NULL AND dmr.tls_success = 1",
+	"tls_error":    "dmr.id IS NOT NULL AND dmr.tls_success = 0",
+	"unchecked":    "dmr.id IS NULL",
+	"matched":      "dmr.id IS NOT NULL AND dmr.domain_matched = 1",
+	"unmatched":    "dmr.id IS NOT NULL AND dmr.domain_matched = 0",
+	"expiring_30d": "dmr.expire_at IS NOT NULL AND strftime('%s', dmr.expire_at) > strftime('%s', 'now') AND strftime('%s', dmr.expire_at) <= strftime('%s', 'now', '+30 days')",
+	"expired":      "dmr.expire_at IS NOT NULL AND strftime('%s', dmr.expire_at) <= strftime('%s', 'now')",
+}
+
+// sortByWhitelist maps allowed sort_by parameter values to safe SQL expressions.
+var sortByWhitelist = map[string]string{
+	"name":            "LOWER(RTRIM(d.name, '.'))",
+	"source":          "d.source",
+	"monitor_port":    "d.monitor_port",
+	"tls_success":     "COALESCE(dmr.tls_success, -1)",
+	"domain_matched":  "COALESCE(dmr.domain_matched, -1)",
+	"expire_at":       "COALESCE(strftime('%s', dmr.expire_at), 0)",
+	"checked_at":      "COALESCE(strftime('%s', dmr.checked_at), 0)",
+	"monitor_enabled": "d.monitor_enabled",
+	"alert_ignored":   "d.alert_ignored",
+}
 
 // DomainRepository handles domain monitor CRUD and monitor result storage.
 type DomainRepository struct {
@@ -36,16 +65,17 @@ func (r *DomainRepository) Create(ctx context.Context, domain *model.Domain) err
 	}
 
 	query := `INSERT INTO domains (
-		id, name, source, thirdpart_dns_id, dns_record_type, dns_record_value,
+		id, name, source, thirdpart_dns_id, dns_record_id, dns_record_type, dns_record_value,
 		monitor_port, linked_machine_id, linked_certificate_id,
-		linked_machine_certificate_id, monitor_enabled, created_at, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		linked_machine_certificate_id, monitor_enabled, alert_ignored, created_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	_, err := r.db.ExecContext(ctx, query,
 		domain.ID,
 		domain.Name,
 		domain.Source,
 		domain.ThirdpartDNSID,
+		domain.DNSRecordID,
 		domain.DNSRecordType,
 		domain.DNSRecordValue,
 		domain.MonitorPort,
@@ -53,6 +83,7 @@ func (r *DomainRepository) Create(ctx context.Context, domain *model.Domain) err
 		nullableString(domain.LinkedCertificateID),
 		nullableString(domain.LinkedMachineCertificateID),
 		boolToInt(domain.MonitorEnabled),
+		boolToInt(domain.AlertIgnored),
 		domain.CreatedAt.Format(time.RFC3339),
 		domain.UpdatedAt.Format(time.RFC3339),
 	)
@@ -65,9 +96,9 @@ func (r *DomainRepository) Create(ctx context.Context, domain *model.Domain) err
 
 // GetByID retrieves a domain by ID.
 func (r *DomainRepository) GetByID(ctx context.Context, id string) (*model.Domain, error) {
-	query := `SELECT id, name, source, thirdpart_dns_id, dns_record_type, dns_record_value,
+	query := `SELECT id, name, source, thirdpart_dns_id, dns_record_id, dns_record_type, dns_record_value,
 		monitor_port, linked_machine_id, linked_certificate_id,
-		linked_machine_certificate_id, monitor_enabled, created_at, updated_at
+		linked_machine_certificate_id, monitor_enabled, alert_ignored, created_at, updated_at
 	FROM domains WHERE id = ?`
 
 	row := r.db.QueryRowContext(ctx, query, id)
@@ -76,9 +107,9 @@ func (r *DomainRepository) GetByID(ctx context.Context, id string) (*model.Domai
 
 // List returns domains with optional filtering.
 func (r *DomainRepository) List(ctx context.Context, filter model.DomainFilter) ([]*model.Domain, error) {
-	query := `SELECT id, name, source, thirdpart_dns_id, dns_record_type, dns_record_value,
+	query := `SELECT id, name, source, thirdpart_dns_id, dns_record_id, dns_record_type, dns_record_value,
 		monitor_port, linked_machine_id, linked_certificate_id,
-		linked_machine_certificate_id, monitor_enabled, created_at, updated_at
+		linked_machine_certificate_id, monitor_enabled, alert_ignored, created_at, updated_at
 	FROM domains WHERE 1=1`
 
 	var args []interface{}
@@ -145,7 +176,7 @@ func (r *DomainRepository) Update(ctx context.Context, id string, updates map[st
 		setClauses += key + " = ?"
 
 		switch key {
-		case "monitor_enabled":
+		case "monitor_enabled", "alert_ignored":
 			if b, ok := value.(bool); ok {
 				args = append(args, boolToInt(b))
 			} else {
@@ -262,7 +293,7 @@ func (r *DomainRepository) GetLatestMonitorResult(ctx context.Context, domainID 
 func (r *DomainRepository) scanDomain(row *sql.Row) (*model.Domain, error) {
 	var domain model.Domain
 	var createdAt, updatedAt string
-	var monitorEnabled int
+	var monitorEnabled, alertIgnored int
 	var linkedMachineID, linkedCertificateID, linkedMachineCertificateID sql.NullString
 
 	err := row.Scan(
@@ -270,6 +301,7 @@ func (r *DomainRepository) scanDomain(row *sql.Row) (*model.Domain, error) {
 		&domain.Name,
 		&domain.Source,
 		&domain.ThirdpartDNSID,
+		&domain.DNSRecordID,
 		&domain.DNSRecordType,
 		&domain.DNSRecordValue,
 		&domain.MonitorPort,
@@ -277,6 +309,7 @@ func (r *DomainRepository) scanDomain(row *sql.Row) (*model.Domain, error) {
 		&linkedCertificateID,
 		&linkedMachineCertificateID,
 		&monitorEnabled,
+		&alertIgnored,
 		&createdAt,
 		&updatedAt,
 	)
@@ -287,14 +320,14 @@ func (r *DomainRepository) scanDomain(row *sql.Row) (*model.Domain, error) {
 		return nil, fmt.Errorf("failed to scan domain: %w", err)
 	}
 
-	return r.populateDomain(&domain, createdAt, updatedAt, monitorEnabled, linkedMachineID, linkedCertificateID, linkedMachineCertificateID)
+	return r.populateDomain(&domain, createdAt, updatedAt, monitorEnabled, alertIgnored, linkedMachineID, linkedCertificateID, linkedMachineCertificateID)
 }
 
 // scanDomainFromRows scans a row from sql.Rows into a Domain model.
 func (r *DomainRepository) scanDomainFromRows(rows *sql.Rows) (*model.Domain, error) {
 	var domain model.Domain
 	var createdAt, updatedAt string
-	var monitorEnabled int
+	var monitorEnabled, alertIgnored int
 	var linkedMachineID, linkedCertificateID, linkedMachineCertificateID sql.NullString
 
 	err := rows.Scan(
@@ -302,6 +335,7 @@ func (r *DomainRepository) scanDomainFromRows(rows *sql.Rows) (*model.Domain, er
 		&domain.Name,
 		&domain.Source,
 		&domain.ThirdpartDNSID,
+		&domain.DNSRecordID,
 		&domain.DNSRecordType,
 		&domain.DNSRecordValue,
 		&domain.MonitorPort,
@@ -309,6 +343,7 @@ func (r *DomainRepository) scanDomainFromRows(rows *sql.Rows) (*model.Domain, er
 		&linkedCertificateID,
 		&linkedMachineCertificateID,
 		&monitorEnabled,
+		&alertIgnored,
 		&createdAt,
 		&updatedAt,
 	)
@@ -316,14 +351,14 @@ func (r *DomainRepository) scanDomainFromRows(rows *sql.Rows) (*model.Domain, er
 		return nil, fmt.Errorf("failed to scan domain row: %w", err)
 	}
 
-	return r.populateDomain(&domain, createdAt, updatedAt, monitorEnabled, linkedMachineID, linkedCertificateID, linkedMachineCertificateID)
+	return r.populateDomain(&domain, createdAt, updatedAt, monitorEnabled, alertIgnored, linkedMachineID, linkedCertificateID, linkedMachineCertificateID)
 }
 
 // populateDomain fills in parsed fields on a Domain.
 func (r *DomainRepository) populateDomain(
 	domain *model.Domain,
 	createdAt, updatedAt string,
-	monitorEnabled int,
+	monitorEnabled, alertIgnored int,
 	linkedMachineID, linkedCertificateID, linkedMachineCertificateID sql.NullString,
 ) (*model.Domain, error) {
 	var err error
@@ -337,7 +372,8 @@ func (r *DomainRepository) populateDomain(
 		return nil, fmt.Errorf("failed to parse updated_at: %w", err)
 	}
 
-	domain.MonitorEnabled = monitorEnabled == 1
+	domain.MonitorEnabled = monitorEnabled != 0
+	domain.AlertIgnored = alertIgnored != 0
 
 	if linkedMachineID.Valid {
 		domain.LinkedMachineID = linkedMachineID.String
@@ -416,6 +452,146 @@ func (r *DomainRepository) scanMonitorResult(row *sql.Row) (*model.DomainMonitor
 	result.ChainValid = chainValid == 1
 
 	return &result, nil
+}
+
+// buildWhereClause constructs the WHERE clause and args from DomainListParams.
+// All conditions are combined with AND. Empty/missing conditions yield "1=1".
+func buildWhereClause(params model.DomainListParams) (string, []interface{}) {
+	var conditions []string
+	var args []interface{}
+
+	if params.Name != "" {
+		conditions = append(conditions, "d.name LIKE ?")
+		args = append(args, "%"+params.Name+"%")
+	}
+	if params.Source != "" {
+		conditions = append(conditions, "d.source = ?")
+		args = append(args, params.Source)
+	}
+	if params.ThirdpartDNSID != "" {
+		conditions = append(conditions, "d.thirdpart_dns_id = ?")
+		args = append(args, params.ThirdpartDNSID)
+	}
+	if params.MonitorEnabled != nil {
+		if *params.MonitorEnabled {
+			conditions = append(conditions, "d.monitor_enabled = 1")
+		} else {
+			conditions = append(conditions, "d.monitor_enabled = 0")
+		}
+	}
+	if params.AlertIgnored != nil {
+		if *params.AlertIgnored {
+			conditions = append(conditions, "d.alert_ignored = 1")
+		} else {
+			conditions = append(conditions, "d.alert_ignored = 0")
+		}
+	}
+
+	// Status filter predicate (AND combined with above)
+	if predicate, ok := filterStatusPredicates[params.FilterStatus]; ok {
+		conditions = append(conditions, predicate)
+	}
+
+	if len(conditions) == 0 {
+		return "1=1", args
+	}
+	return strings.Join(conditions, " AND "), args
+}
+
+// buildOrderByClause returns the ORDER BY clause for a given sort_by and sort_order.
+// If sort_by is not in the whitelist, falls back to the default multi-level sort.
+func buildOrderByClause(sortBy, sortOrder string) string {
+	expr, ok := sortByWhitelist[sortBy]
+	if !ok {
+		return buildDefaultOrderBy()
+	}
+	direction := "ASC"
+	if strings.ToLower(sortOrder) == "desc" {
+		direction = "DESC"
+	}
+	return fmt.Sprintf("ORDER BY %s %s, d.id ASC", expr, direction)
+}
+
+// buildDefaultOrderBy returns the default multi-level sort ORDER BY clause.
+func buildDefaultOrderBy() string {
+	return `ORDER BY
+  CASE WHEN d.alert_ignored = 1 THEN 3 WHEN d.monitor_enabled = 0 THEN 2 WHEN (dmr.id IS NULL OR dmr.tls_success = 0 OR dmr.domain_matched = 0 OR dmr.chain_valid = 0 OR dmr.error_message LIKE 'fingerprint mismatch:%' OR strftime('%s', dmr.expire_at) <= strftime('%s', 'now') OR (dmr.expire_at IS NOT NULL AND strftime('%s', dmr.expire_at) <= strftime('%s', 'now', '+30 days'))) THEN 0 ELSE 1 END ASC,
+  CASE WHEN d.alert_ignored = 1 THEN 99 WHEN d.monitor_enabled = 0 THEN 99 WHEN strftime('%s', dmr.expire_at) <= strftime('%s', 'now') THEN 0 WHEN dmr.tls_success = 0 AND dmr.error_message != '' THEN 1 WHEN dmr.error_message LIKE 'fingerprint mismatch:%' THEN 2 WHEN dmr.chain_valid = 0 THEN 3 WHEN dmr.domain_matched = 0 THEN 4 WHEN strftime('%s', dmr.expire_at) <= strftime('%s', 'now', '+30 days') THEN 5 WHEN dmr.id IS NULL THEN 6 ELSE 99 END ASC,
+  CASE WHEN d.alert_ignored = 0 AND d.monitor_enabled = 1 AND NOT (dmr.id IS NULL OR dmr.tls_success = 0 OR dmr.domain_matched = 0 OR dmr.chain_valid = 0 OR dmr.error_message LIKE 'fingerprint mismatch:%' OR strftime('%s', dmr.expire_at) <= strftime('%s', 'now') OR (dmr.expire_at IS NOT NULL AND strftime('%s', dmr.expire_at) <= strftime('%s', 'now', '+30 days'))) THEN COALESCE(strftime('%s', dmr.expire_at), 9223372036854775807) ELSE 9223372036854775807 END ASC,
+  LOWER(RTRIM(d.name, '.')) ASC,
+  d.monitor_port ASC,
+  d.id ASC`
+}
+
+// ListWithSort returns domains with server-side sorting, filtering, and pagination.
+// Only SELECTs domain table columns. The LEFT JOIN on domain_monitor_results (latest row)
+// is used solely for filtering and sorting purposes.
+// Returns ([]*model.Domain, totalCount, error).
+func (r *DomainRepository) ListWithSort(ctx context.Context, params model.DomainListParams) ([]*model.Domain, int, error) {
+	whereClause, args := buildWhereClause(params)
+
+	joinClause := `LEFT JOIN domain_monitor_results dmr ON dmr.domain_id = d.id
+  AND dmr.id = (SELECT id FROM domain_monitor_results WHERE domain_id = d.id ORDER BY checked_at DESC LIMIT 1)`
+
+	// COUNT query (before pagination)
+	countSQL := fmt.Sprintf("SELECT COUNT(*) FROM domains d %s WHERE %s", joinClause, whereClause)
+	var total int
+	if err := r.db.QueryRowContext(ctx, countSQL, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("failed to count domains: %w", err)
+	}
+
+	// Build ORDER BY
+	orderByClause := buildOrderByClause(params.SortBy, params.SortOrder)
+
+	// Pagination defaults
+	perPage := params.PerPage
+	if perPage <= 0 {
+		perPage = 50
+	}
+	if perPage > 100 {
+		perPage = 100
+	}
+	page := params.Page
+	if page <= 0 {
+		page = 1
+	}
+	offset := (page - 1) * perPage
+
+	// Data query: only SELECT domain columns
+	dataSQL := fmt.Sprintf(`SELECT d.id, d.name, d.source, d.thirdpart_dns_id, d.dns_record_id, d.dns_record_type, d.dns_record_value,
+       d.monitor_port, d.linked_machine_id, d.linked_certificate_id,
+       d.linked_machine_certificate_id, d.monitor_enabled, d.alert_ignored,
+       d.created_at, d.updated_at
+FROM domains d %s
+WHERE %s
+%s
+LIMIT ? OFFSET ?`, joinClause, whereClause, orderByClause)
+
+	// Append pagination args after the WHERE args
+	dataArgs := make([]interface{}, len(args))
+	copy(dataArgs, args)
+	dataArgs = append(dataArgs, perPage, offset)
+
+	rows, err := r.db.QueryContext(ctx, dataSQL, dataArgs...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query domains with sort: %w", err)
+	}
+	defer rows.Close()
+
+	var domains []*model.Domain
+	for rows.Next() {
+		domain, err := r.scanDomainFromRows(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		domains = append(domains, domain)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("error iterating domain rows: %w", err)
+	}
+
+	return domains, total, nil
 }
 
 // nullableString returns a sql.NullString for optional string fields.

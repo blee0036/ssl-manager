@@ -185,8 +185,8 @@ func (r *ThirdpartDNSRepository) SaveSyncLog(ctx context.Context, log *model.Thi
 	}
 
 	query := `INSERT INTO thirdpart_dns_sync_logs (
-		id, thirdpart_dns_id, records_count, status, error_message, synced_at
-	) VALUES (?, ?, ?, ?, ?, ?)`
+		id, thirdpart_dns_id, records_count, status, error_message, new_domains, updated_domains, removed_domains, synced_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	_, err := r.db.ExecContext(ctx, query,
 		log.ID,
@@ -194,6 +194,9 @@ func (r *ThirdpartDNSRepository) SaveSyncLog(ctx context.Context, log *model.Thi
 		log.RecordsCount,
 		log.Status,
 		log.ErrorMessage,
+		log.NewDomains,
+		log.UpdatedDomains,
+		log.RemovedDomains,
 		log.SyncedAt.UTC().Format(time.RFC3339),
 	)
 	if err != nil {
@@ -205,7 +208,9 @@ func (r *ThirdpartDNSRepository) SaveSyncLog(ctx context.Context, log *model.Thi
 
 // GetSyncLogs retrieves sync logs for a thirdpart_dns configuration, ordered by time descending.
 func (r *ThirdpartDNSRepository) GetSyncLogs(ctx context.Context, thirdpartDNSID string) ([]*model.ThirdpartDNSSyncLog, error) {
-	query := `SELECT id, thirdpart_dns_id, records_count, status, error_message, synced_at
+	query := `SELECT id, thirdpart_dns_id, records_count, status, error_message,
+	COALESCE(new_domains, '[]'), COALESCE(updated_domains, '[]'), COALESCE(removed_domains, '[]'),
+	synced_at
 	FROM thirdpart_dns_sync_logs WHERE thirdpart_dns_id = ?
 	ORDER BY synced_at DESC`
 
@@ -321,6 +326,9 @@ func (r *ThirdpartDNSRepository) scanSyncLogFromRows(rows *sql.Rows) (*model.Thi
 		&l.RecordsCount,
 		&l.Status,
 		&l.ErrorMessage,
+		&l.NewDomains,
+		&l.UpdatedDomains,
+		&l.RemovedDomains,
 		&syncedAt,
 	)
 	if err != nil {

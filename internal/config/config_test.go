@@ -399,3 +399,53 @@ func TestLoadConfig_PartialJSON_UsesDefaults(t *testing.T) {
 		t.Errorf("expected default DomainMonitor.DefaultPort 443, got %d", loaded.DomainMonitor.DefaultPort)
 	}
 }
+
+func TestLoadConfig_SyncIntervalZero_PersistsAsDisabled(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "config.json")
+
+	// Save a config with sync_interval_minutes = 0 (explicitly disabled)
+	cfg := DefaultConfig()
+	cfg.ThirdpartDNS.SyncIntervalMinutes = 0
+	if err := SaveConfig(path, cfg); err != nil {
+		t.Fatalf("SaveConfig failed: %v", err)
+	}
+
+	// Load it back — should remain 0, not get overwritten to 360
+	loaded, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	if loaded.ThirdpartDNS.SyncIntervalMinutes != 0 {
+		t.Errorf("expected SyncIntervalMinutes=0 (disabled), got %d", loaded.ThirdpartDNS.SyncIntervalMinutes)
+	}
+}
+
+func TestLoadConfig_MissingThirdpartDNS_UsesDefault360(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "config.json")
+
+	// Write config without thirdpart_dns field (simulates old config file)
+	cfg := map[string]interface{}{
+		"server": map[string]interface{}{
+			"external_url": "https://mysite.com",
+			"listen_addr":  ":443",
+		},
+	}
+	data, _ := json.Marshal(cfg)
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	// Should use default 360 from DefaultConfig() (since the field is missing, JSON
+	// unmarshal into DefaultConfig() leaves the 360 default intact)
+	if loaded.ThirdpartDNS.SyncIntervalMinutes != 360 {
+		t.Errorf("expected default SyncIntervalMinutes=360 for missing field, got %d", loaded.ThirdpartDNS.SyncIntervalMinutes)
+	}
+}

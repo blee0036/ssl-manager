@@ -64,6 +64,7 @@ func setupDomainMonitorTestDB(t *testing.T) *sql.DB {
 		name TEXT NOT NULL,
 		source TEXT DEFAULT 'manual' CHECK(source IN ('manual', 'certificate', 'cloudflare')),
 		thirdpart_dns_id TEXT DEFAULT '',
+		dns_record_id TEXT DEFAULT '',
 		dns_record_type TEXT DEFAULT '',
 		dns_record_value TEXT DEFAULT '',
 		monitor_port INTEGER NOT NULL DEFAULT 443,
@@ -71,6 +72,7 @@ func setupDomainMonitorTestDB(t *testing.T) *sql.DB {
 		linked_certificate_id TEXT,
 		linked_machine_certificate_id TEXT,
 		monitor_enabled INTEGER NOT NULL DEFAULT 1,
+		alert_ignored INTEGER NOT NULL DEFAULT 0,
 		created_at TEXT NOT NULL,
 		updated_at TEXT NOT NULL
 	)`)

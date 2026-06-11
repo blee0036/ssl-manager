@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, reactive } from 'vue';
 import { NCard, NSpace, NButton, NIcon, NResult, useMessage } from 'naive-ui';
 import { RefreshOutline } from '@vicons/ionicons5';
 import DnsTable from './components/DnsTable.vue';
@@ -8,6 +8,7 @@ import SyncLogDrawer from './components/SyncLogDrawer.vue';
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue';
 import EmptyState from '@/components/common/EmptyState.vue';
 import { useTable } from '@/hooks/useTable';
+import { getApiErrorMessage } from '@/utils/error';
 import {
   fetchThirdpartDnsList,
   deleteThirdpartDns,
@@ -22,6 +23,11 @@ const { data, loading, error, pagination, refresh } = useTable<Api.ThirdpartDns>
   fetchFn: fetchThirdpartDnsList,
   immediate: true,
 });
+
+// Per-row loading state Sets
+const syncingIds = reactive(new Set<string>());
+const deletingIds = reactive(new Set<string>());
+const togglingIds = reactive(new Set<string>());
 
 // Create/Edit dialog
 const showCreateEditDialog = ref(false);
@@ -43,7 +49,6 @@ function handleDialogSuccess() {
 
 // Delete confirm
 const showDeleteConfirm = ref(false);
-const deleteLoading = ref(false);
 const deletingItem = ref<Api.ThirdpartDns | null>(null);
 
 function handleDeleteClick(item: Api.ThirdpartDns) {
@@ -53,39 +58,53 @@ function handleDeleteClick(item: Api.ThirdpartDns) {
 
 async function handleDeleteConfirm() {
   if (!deletingItem.value) return;
-  deleteLoading.value = true;
+  const id = deletingItem.value.id;
+  deletingIds.add(id);
   try {
-    await deleteThirdpartDns(deletingItem.value.id);
+    await deleteThirdpartDns(id);
     message.success('DNS 配置已删除');
     showDeleteConfirm.value = false;
     refresh();
-  } catch {
-    message.error('删除失败');
+  } catch (err) {
+    message.error(getApiErrorMessage(err, '删除失败'));
   } finally {
-    deleteLoading.value = false;
+    deletingIds.delete(id);
   }
 }
 
 // Sync
+const syncLogDrawerRef = ref<InstanceType<typeof SyncLogDrawer> | null>(null);
+
 async function handleSync(item: Api.ThirdpartDns) {
+  const id = item.id;
+  syncingIds.add(id);
   try {
-    await syncThirdpartDns(item.id);
-    message.success('同步已触发');
-  } catch {
-    message.error('同步触发失败');
+    await syncThirdpartDns(id);
+    message.success('同步完成');
+    refresh();
+    // Refresh sync log drawer if open for this item
+    if (showSyncLogDrawer.value && syncLogItem.value?.id === id) {
+      syncLogDrawerRef.value?.refresh();
+    }
+  } catch (err) {
+    message.error(getApiErrorMessage(err, '同步失败'));
+  } finally {
+    syncingIds.delete(id);
   }
 }
 
 // Toggle enabled
 async function handleToggleEnabled(item: Api.ThirdpartDns, enabled: boolean) {
+  const id = item.id;
+  togglingIds.add(id);
   try {
-    await updateThirdpartDns(item.id, {
-      enabled,
-    });
+    await updateThirdpartDns(id, { enabled });
     message.success(enabled ? '已启用' : '已禁用');
     refresh();
-  } catch {
-    message.error('操作失败');
+  } catch (err) {
+    message.error(getApiErrorMessage(err, '操作失败'));
+  } finally {
+    togglingIds.delete(id);
   }
 }
 
@@ -137,6 +156,9 @@ function handleViewLogs(item: Api.ThirdpartDns) {
         :data="data"
         :loading="loading"
         :pagination="pagination"
+        :syncing-ids="syncingIds"
+        :deleting-ids="deletingIds"
+        :toggling-ids="togglingIds"
         @edit="handleEdit"
         @delete="handleDeleteClick"
         @sync="handleSync"
@@ -161,12 +183,13 @@ function handleViewLogs(item: Api.ThirdpartDns) {
       :content="`确定要删除 DNS 配置「${deletingItem?.name ?? ''}」吗？此操作不可撤销。`"
       confirm-text="删除"
       type="error"
-      :loading="deleteLoading"
+      :loading="deletingItem ? deletingIds.has(deletingItem.id) : false"
       @confirm="handleDeleteConfirm"
     />
 
     <!-- 同步日志抽屉 -->
     <SyncLogDrawer
+      ref="syncLogDrawerRef"
       v-model:show="showSyncLogDrawer"
       :dns-item="syncLogItem"
     />

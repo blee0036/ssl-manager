@@ -65,8 +65,17 @@ async function onSubmit() {
     if (formModel.linked_certificate_id) {
       payload.linked_certificate_id = formModel.linked_certificate_id;
     }
-    await createDomain(payload);
-    message.success('域名添加成功');
+    const response = await createDomain(payload);
+
+    // 根据探测结果显示不同级别通知
+    if (response.probe_result && (!response.probe_result.tls_success || response.probe_result.error_message)) {
+      message.warning('域名已添加，但首次检测异常：' + (response.probe_result.error_message || 'TLS 检测失败'));
+    } else if (response.probe_error) {
+      message.warning('域名已添加，但首次检测失败：' + response.probe_error);
+    } else {
+      message.success('域名添加成功');
+    }
+
     emit('success');
     emit('update:show', false);
   });

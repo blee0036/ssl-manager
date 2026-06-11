@@ -1,6 +1,7 @@
 import { ref } from 'vue';
 import type { Ref } from 'vue';
 import type { FormInst } from 'naive-ui';
+import { getApiErrorMessage } from '@/utils/error';
 
 /**
  * 表单通用逻辑 Hook
@@ -44,7 +45,7 @@ export function useForm() {
       await submitFn();
       return true;
     } catch (err: unknown) {
-      submitError.value = err instanceof Error ? err.message : '操作失败';
+      submitError.value = getApiErrorMessage(err, '操作失败');
       return false;
     } finally {
       submitting.value = false;

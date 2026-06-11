@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ssl-manager/ssl-manager/internal/model"
@@ -41,20 +42,30 @@ func (h *DomainHandler) RegisterRoutes(r chi.Router, authService middleware.Auth
 	})
 }
 
-// List handles GET /api/domains - list domain monitors with optional filtering.
+// List handles GET /api/domains - list domain monitors with server-side sorting, filtering, and pagination.
 func (h *DomainHandler) List(w http.ResponseWriter, r *http.Request) {
-	filter := model.DomainFilter{
+	params := model.DomainListParams{
 		Name:           r.URL.Query().Get("name"),
 		Source:         r.URL.Query().Get("source"),
 		ThirdpartDNSID: r.URL.Query().Get("thirdpart_dns_id"),
+		FilterStatus:   r.URL.Query().Get("filter_status"),
+		SortBy:         r.URL.Query().Get("sort_by"),
+		SortOrder:      r.URL.Query().Get("sort_order"),
 	}
 
-	if monitorEnabled := r.URL.Query().Get("monitor_enabled"); monitorEnabled != "" {
-		val := monitorEnabled == "true"
-		filter.MonitorEnabled = &val
+	if me := r.URL.Query().Get("monitor_enabled"); me != "" {
+		val := me == "true"
+		params.MonitorEnabled = &val
+	}
+	if ai := r.URL.Query().Get("alert_ignored"); ai != "" {
+		val := ai == "true"
+		params.AlertIgnored = &val
 	}
 
-	domains, err := h.domainService.List(r.Context(), filter)
+	params.Page = parseIntParam(r, "page", 1)
+	params.PerPage = parseIntParam(r, "per_page", 50)
+
+	domains, total, err := h.domainService.ListWithSort(r.Context(), params)
 	if err != nil {
 		writeErrorResponse(w, http.StatusInternalServerError, "failed to list domains", err.Error())
 		return
@@ -70,19 +81,62 @@ func (h *DomainHandler) List(w http.ResponseWriter, r *http.Request) {
 		LatestMonitorResult *model.DomainMonitorResult `json:"latest_monitor_result"`
 	}
 
-	results := make([]DomainWithMonitor, 0, len(domains))
+	items := make([]DomainWithMonitor, 0, len(domains))
 	for _, d := range domains {
 		dwm := DomainWithMonitor{Domain: d}
 		if result, err := h.domainService.GetLatestMonitorResult(r.Context(), d.ID); err == nil {
 			dwm.LatestMonitorResult = result
 		}
-		results = append(results, dwm)
+		items = append(items, dwm)
 	}
 
-	writeSuccessResponse(w, http.StatusOK, "success", results)
+	// Return paginated response: { items, total, page, per_page }
+	type PaginatedData struct {
+		Items   []DomainWithMonitor `json:"items"`
+		Total   int                 `json:"total"`
+		Page    int                 `json:"page"`
+		PerPage int                 `json:"per_page"`
+	}
+
+	writeSuccessResponse(w, http.StatusOK, "success", PaginatedData{
+		Items:   items,
+		Total:   total,
+		Page:    params.Page,
+		PerPage: params.PerPage,
+	})
+}
+
+// parseIntParam parses a URL query parameter as int with a default value.
+// For "page", ensures value >= 1. For "per_page", clamps to range [1, 100].
+func parseIntParam(r *http.Request, key string, defaultVal int) int {
+	raw := r.URL.Query().Get(key)
+	if raw == "" {
+		return defaultVal
+	}
+	val, err := strconv.Atoi(raw)
+	if err != nil {
+		return defaultVal
+	}
+	switch key {
+	case "page":
+		if val < 1 {
+			return 1
+		}
+	case "per_page":
+		if val < 1 {
+			return 1
+		}
+		if val > 100 {
+			return 100
+		}
+	}
+	return val
 }
 
 // Create handles POST /api/domains - create a new domain monitor.
+// For manual source domains, auto-probes TLS after creation and includes
+// probe_result/probe_error in the response. Probe failure does not affect
+// the domain record (it remains created).
 func (h *DomainHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var input model.CreateDomainInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -102,7 +156,29 @@ func (h *DomainHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeSuccessResponse(w, http.StatusCreated, "domain monitor created", domain)
+	// Auto-probe ONLY for manual source domains.
+	// DNS sync domains should NOT be probed at creation (they go through a different path).
+	if domain.Source != "manual" {
+		writeSuccessResponse(w, http.StatusCreated, "domain monitor created", domain)
+		return
+	}
+
+	probeResult, probeErr := h.domainService.Probe(r.Context(), domain.ID)
+
+	type CreateResponse struct {
+		*model.Domain
+		ProbeResult *model.DomainMonitorResult `json:"probe_result,omitempty"`
+		ProbeError  string                     `json:"probe_error,omitempty"`
+	}
+
+	resp := CreateResponse{Domain: domain}
+	if probeErr != nil {
+		resp.ProbeError = probeErr.Error()
+	} else {
+		resp.ProbeResult = probeResult
+	}
+
+	writeSuccessResponse(w, http.StatusCreated, "domain monitor created", resp)
 }
 
 // GetByID handles GET /api/domains/{id} - get domain monitor details.

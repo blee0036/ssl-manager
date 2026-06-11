@@ -155,6 +155,7 @@ func run() error {
 		runtimeCfg, certRepo, machineRepo, certService, certbotWrapper, alertService, sqlDB,
 	)
 	schedulerService.SetDomainMonitorService(domainMonitorService)
+	schedulerService.SetThirdpartDNSService(dnsService, dnsRepo)
 
 	// Create auth service adapter for middleware
 	authAdapter := &authServiceAdapter{

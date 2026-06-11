@@ -218,6 +218,12 @@ func (s *AlertService) MarkResolved(ctx context.Context, alertID string) error {
 	return nil
 }
 
+// SuppressActiveByTarget sets all active alerts for a given target to 'suppressed' status.
+// Called when a domain is marked as alert_ignored to suppress its existing active alerts.
+func (s *AlertService) SuppressActiveByTarget(ctx context.Context, targetType, targetID string) error {
+	return s.alertRepo.SuppressActiveByTarget(ctx, targetType, targetID)
+}
+
 // AutoResolve resolves all active alerts matching the given target type, target ID, and alert type.
 // Called automatically when the condition that triggered the alert is no longer present.
 func (s *AlertService) AutoResolve(ctx context.Context, targetType, targetID, alertType string) {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, reactive, onMounted } from 'vue';
 import {
   NCard,
   NSpace,
@@ -22,6 +22,7 @@ import UploadDialog from './components/UploadDialog.vue';
 import CloudflareIssueDialog from './components/CloudflareIssueDialog.vue';
 import ManualDnsDialog from './components/ManualDnsDialog.vue';
 import EmptyState from '@/components/common/EmptyState.vue';
+import { getApiErrorMessage } from '@/utils/error';
 
 const message = useMessage();
 const dialog = useDialog();
@@ -30,6 +31,9 @@ const dialog = useDialog();
 const certList = ref<Api.Certificate[]>([]);
 const loading = ref(false);
 const error = ref('');
+
+// Per-row loading Sets
+const deletingIds = reactive(new Set<string>());
 
 /** 弹窗控制 */
 const showUploadDialog = ref(false);
@@ -60,13 +64,15 @@ function handleDelete(row: Api.Certificate) {
     positiveText: '删除',
     negativeText: '取消',
     onPositiveClick: async () => {
+      deletingIds.add(row.id);
       try {
         await deleteCertificate(row.id);
         message.success('证书已删除');
         fetchCertificates();
       } catch (err: unknown) {
-        const errMsg = err instanceof Error ? err.message : '删除失败';
-        message.error(errMsg);
+        message.error(getApiErrorMessage(err, '删除失败'));
+      } finally {
+        deletingIds.delete(row.id);
       }
     },
   });
@@ -147,6 +153,7 @@ onMounted(() => {
       <CertTable
         :data="certList"
         :loading="loading"
+        :deleting-ids="deletingIds"
         @delete="handleDelete"
       />
       <!-- 空状态 -->

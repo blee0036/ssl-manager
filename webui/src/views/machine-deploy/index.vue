@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, reactive, computed, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { NCard, NSpace, NButton, NIcon, NResult, useMessage } from 'naive-ui';
 import { RefreshOutline } from '@vicons/ionicons5';
@@ -10,12 +10,17 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue';
 import EmptyState from '@/components/common/EmptyState.vue';
 import { fetchMachineCertificates, deleteMachineCertificate, triggerDeploy } from '@/service/api/machine-cert';
 import { getCertificates } from '@/service/api/certificate';
+import { getApiErrorMessage } from '@/utils/error';
 
 const route = useRoute();
 const router = useRouter();
 const message = useMessage();
 
 const machineId = computed(() => String(route.params.id));
+
+// Per-row loading Sets
+const deployingIds = reactive(new Set<string>());
+const deletingIds = reactive(new Set<string>());
 
 // Certificate name map for display
 const certNameMap = ref<Record<string, string>>({});
@@ -66,6 +71,21 @@ onMounted(() => {
 
 // Create dialog
 const showCreateDialog = ref(false);
+const editingConfig = ref<Api.MachineCertificate | null>(null);
+
+function handleEditClick(config: Api.MachineCertificate) {
+  editingConfig.value = config;
+  showCreateDialog.value = true;
+}
+
+function handleCreateClick() {
+  editingConfig.value = null;
+  showCreateDialog.value = true;
+}
+
+function handleDialogSuccess() {
+  refresh();
+}
 
 // Delete confirm
 const showDeleteConfirm = ref(false);
@@ -79,16 +99,19 @@ function handleDeleteClick(config: Api.MachineCertificate) {
 
 async function handleDeleteConfirm() {
   if (!deletingConfig.value) return;
+  const id = deletingConfig.value.id;
   deleteLoading.value = true;
+  deletingIds.add(id);
   try {
-    await deleteMachineCertificate(machineId.value, deletingConfig.value.id);
+    await deleteMachineCertificate(machineId.value, id);
     message.success('部署配置已删除');
     showDeleteConfirm.value = false;
     refresh();
-  } catch {
-    message.error('删除失败');
+  } catch (err: unknown) {
+    message.error(getApiErrorMessage(err, '删除失败'));
   } finally {
     deleteLoading.value = false;
+    deletingIds.delete(id);
   }
 }
 
@@ -104,16 +127,19 @@ function handleDeployClick(config: Api.MachineCertificate) {
 
 async function handleDeployConfirm() {
   if (!deployingConfig.value) return;
+  const id = deployingConfig.value.id;
   deployLoading.value = true;
+  deployingIds.add(id);
   try {
-    await triggerDeploy(machineId.value, deployingConfig.value.id);
+    await triggerDeploy(machineId.value, id);
     message.success('部署任务已触发');
     showDeployConfirm.value = false;
     refresh();
-  } catch {
-    message.error('部署触发失败');
+  } catch (err: unknown) {
+    message.error(getApiErrorMessage(err, '部署触发失败'));
   } finally {
     deployLoading.value = false;
+    deployingIds.delete(id);
   }
 }
 
@@ -142,7 +168,7 @@ function handleViewLog(config: Api.MachineCertificate) {
           <NButton
             v-permission:action="'write'"
             type="primary"
-            @click="showCreateDialog = true"
+            @click="handleCreateClick"
           >
             新增配置
           </NButton>
@@ -170,6 +196,9 @@ function handleViewLog(config: Api.MachineCertificate) {
         :data="data"
         :loading="loading"
         :cert-name-map="certNameMap"
+        :deploying-ids="deployingIds"
+        :deleting-ids="deletingIds"
+        @edit="handleEditClick"
         @delete="handleDeleteClick"
         @deploy="handleDeployClick"
         @view-log="handleViewLog"
@@ -178,11 +207,12 @@ function handleViewLog(config: Api.MachineCertificate) {
       <EmptyState v-if="!loading && data.length === 0" description="暂无部署配置" />
     </NCard>
 
-    <!-- 新增配置对话框 -->
+    <!-- 新增/编辑配置对话框 -->
     <CreateConfigDialog
       v-model:show="showCreateDialog"
       :machine-id="machineId"
-      @success="refresh"
+      :edit-item="editingConfig"
+      @success="handleDialogSuccess"
     />
 
     <!-- 部署日志抽屉 -->

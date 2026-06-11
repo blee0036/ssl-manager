@@ -139,6 +139,18 @@ func (r *AlertRepository) UpdateStatus(ctx context.Context, id, status string, r
 	return nil
 }
 
+// SuppressActiveByTarget sets all active alerts for a given target to 'suppressed' status.
+func (r *AlertRepository) SuppressActiveByTarget(ctx context.Context, targetType, targetID string) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE alerts SET status = 'suppressed', resolved_at = ? WHERE target_type = ? AND target_id = ? AND status = 'active'`,
+		now, targetType, targetID)
+	if err != nil {
+		return fmt.Errorf("failed to suppress active alerts: %w", err)
+	}
+	return nil
+}
+
 // --- Helper functions ---
 
 func (r *AlertRepository) scanAlert(row *sql.Row) (*model.Alert, error) {

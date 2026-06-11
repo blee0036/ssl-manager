@@ -158,6 +158,7 @@ func (s *DashboardService) getDomainAnomalies(ctx context.Context, stats *Dashbo
 	query := `SELECT COUNT(DISTINCT d.id) FROM domains d
 		INNER JOIN domain_monitor_results dmr ON dmr.domain_id = d.id
 		WHERE d.monitor_enabled = 1
+		AND d.alert_ignored = 0
 		AND dmr.id = (
 			SELECT id FROM domain_monitor_results
 			WHERE domain_id = d.id

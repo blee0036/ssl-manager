@@ -3,11 +3,13 @@ import { reactive, ref, watch, computed } from 'vue';
 import type { FormRules } from 'naive-ui';
 import {
   NModal, NCard, NForm, NFormItem, NInput, NSelect, NSwitch,
-  NDynamicTags, NButton, NSpace, NAlert, useMessage
+  NDynamicTags, NButton, NSpace, NAlert, NRadioGroup, NRadio,
+  NCheckboxGroup, NCheckbox, NTag, useMessage
 } from 'naive-ui';
 import { useForm } from '@/hooks/useForm';
 import CodeBlock from '@/components/CodeBlock/index.vue';
-import { createThirdpartDns, updateThirdpartDns } from '@/service/api/thirdpart-dns';
+import { createThirdpartDns, updateThirdpartDns, scanZones, type CreateThirdpartDnsResponse } from '@/service/api/thirdpart-dns';
+import { getApiErrorMessage } from '@/utils/error';
 
 interface Props {
   show: boolean;
@@ -29,6 +31,13 @@ const { formRef, submitting, submitError, handleSubmit, resetFields } = useForm(
 
 const isEdit = computed(() => !!props.editItem);
 const dialogTitle = computed(() => (isEdit.value ? '编辑 DNS 配置' : '新增 DNS 配置'));
+
+// --- 主域名模式切换 ---
+type DomainInputMode = 'manual' | 'scan';
+const domainInputMode = ref<DomainInputMode>('manual');
+const scanning = ref(false);
+const scannedZones = ref<Api.CloudflareZone[]>([]);
+const selectedZoneNames = ref<string[]>([]);
 
 interface FormModel {
   name: string;
@@ -86,14 +95,6 @@ const rules: FormRules = {
       trigger: 'blur',
     },
   ],
-  main_domains: [
-    {
-      type: 'array',
-      required: true,
-      message: '请至少添加一个主域名',
-      trigger: 'change',
-    },
-  ],
   config_json: [
     {
       validator: validateConfigJson,
@@ -122,6 +123,68 @@ const formattedConfigJson = computed(() => {
   }
 });
 
+/** 全选/取消全选 zone */
+const allZonesSelected = computed(() => {
+  if (scannedZones.value.length === 0) return false;
+  return scannedZones.value.every(z => selectedZoneNames.value.includes(z.name));
+});
+
+function handleSelectAll() {
+  if (allZonesSelected.value) {
+    selectedZoneNames.value = [];
+  } else {
+    selectedZoneNames.value = scannedZones.value.map(z => z.name);
+  }
+  syncSelectedToMainDomains();
+}
+
+/** 将 selectedZoneNames 同步到 formModel.main_domains */
+function syncSelectedToMainDomains() {
+  formModel.main_domains = [...selectedZoneNames.value];
+}
+
+/** 从已选标签中移除某个域名 */
+function handleRemoveSelectedDomain(domain: string) {
+  selectedZoneNames.value = selectedZoneNames.value.filter(n => n !== domain);
+  syncSelectedToMainDomains();
+}
+
+/** NCheckboxGroup 值变化 */
+function handleZoneSelectionChange(values: (string | number)[]) {
+  selectedZoneNames.value = values.map(String);
+  syncSelectedToMainDomains();
+}
+
+/** 扫描 Zones */
+async function handleScanZones() {
+  scanning.value = true;
+  try {
+    // Token 策略：新建用 api_token，编辑无新 token 用 config_id
+    const params: { api_token?: string; config_id?: string } = {};
+    if (isEdit.value && !formModel.api_token.trim() && props.editItem) {
+      params.config_id = props.editItem.id;
+    } else {
+      if (!formModel.api_token.trim()) {
+        message.warning('请先输入 API Token');
+        scanning.value = false;
+        return;
+      }
+      params.api_token = formModel.api_token;
+    }
+
+    const zones = await scanZones(params);
+    scannedZones.value = zones;
+    // 如果 main_domains 已有值，预选匹配的 zone
+    selectedZoneNames.value = formModel.main_domains.filter(d =>
+      zones.some(z => z.name === d)
+    );
+  } catch (err: unknown) {
+    message.error(getApiErrorMessage(err, '扫描失败'));
+  } finally {
+    scanning.value = false;
+  }
+}
+
 watch(
   () => props.show,
   (val) => {
@@ -141,6 +204,11 @@ watch(
         formModel.config_json = '';
         formModel.enabled = true;
       }
+      // 重置扫描状态
+      domainInputMode.value = 'manual';
+      scanning.value = false;
+      scannedZones.value = [];
+      selectedZoneNames.value = [];
       jsonError.value = '';
       resetFields();
     }
@@ -163,8 +231,8 @@ async function onSubmit() {
       await updateThirdpartDns(props.editItem.id, payload);
       message.success('DNS 配置已更新');
     } else {
-      // 创建模式
-      await createThirdpartDns({
+      // 创建模式：创建后自动触发同步，根据结果显示不同提示
+      const response: CreateThirdpartDnsResponse = await createThirdpartDns({
         name: formModel.name,
         type: formModel.type,
         api_token: formModel.api_token,
@@ -172,7 +240,15 @@ async function onSubmit() {
         config_json: formModel.config_json,
         enabled: formModel.enabled,
       });
-      message.success('DNS 配置已创建');
+
+      if (response.sync_result) {
+        const count = response.sync_result.new_domains?.length ?? 0;
+        message.success(`DNS 配置已创建，同步完成（新增 ${count} 个域名）`);
+      } else if (response.sync_error) {
+        message.warning(`DNS 配置已创建，但同步失败：${response.sync_error}`);
+      } else {
+        message.success('DNS 配置已创建');
+      }
     }
     emit('success');
     emit('update:show', false);
@@ -234,9 +310,82 @@ function handleClose() {
           API Token 不会回显，留空表示不修改原有 Token。
         </NAlert>
 
-        <NFormItem label="主域名" path="main_domains">
+        <!-- 主域名模式切换 -->
+        <NFormItem label="主域名配置模式">
+          <NRadioGroup v-model:value="domainInputMode">
+            <NRadio value="manual">手动输入</NRadio>
+            <NRadio value="scan">扫描账号域名</NRadio>
+          </NRadioGroup>
+        </NFormItem>
+
+        <!-- 手动输入模式 -->
+        <NFormItem v-if="domainInputMode === 'manual'" label="主域名" path="main_domains">
           <NDynamicTags v-model:value="formModel.main_domains" />
         </NFormItem>
+
+        <!-- 扫描模式 -->
+        <template v-if="domainInputMode === 'scan'">
+          <NFormItem label="主域名" path="main_domains">
+            <div style="width: 100%">
+              <!-- 扫描按钮 -->
+              <NButton
+                type="primary"
+                :loading="scanning"
+                :disabled="scanning || submitting"
+                @click="handleScanZones"
+              >
+                扫描账号域名
+              </NButton>
+
+              <!-- Zone 列表 -->
+              <template v-if="scannedZones.length > 0">
+                <div style="margin-top: 12px; margin-bottom: 8px;">
+                  <NButton size="small" @click="handleSelectAll">
+                    {{ allZonesSelected ? '取消全选' : '全选' }}
+                  </NButton>
+                </div>
+                <NCheckboxGroup
+                  :value="selectedZoneNames"
+                  @update:value="handleZoneSelectionChange"
+                >
+                  <NSpace item-style="display: flex;" size="small" :wrap="true">
+                    <NCheckbox
+                      v-for="zone in scannedZones"
+                      :key="zone.id"
+                      :value="zone.name"
+                      :label="zone.name"
+                    />
+                  </NSpace>
+                </NCheckboxGroup>
+              </template>
+
+              <!-- 已选展示 -->
+              <div v-if="formModel.main_domains.length > 0" style="margin-top: 12px;">
+                <NSpace size="small" :wrap="true">
+                  <NTag
+                    v-for="domain in formModel.main_domains"
+                    :key="domain"
+                    closable
+                    size="small"
+                    @close="handleRemoveSelectedDomain(domain)"
+                  >
+                    {{ domain }}
+                  </NTag>
+                </NSpace>
+              </div>
+            </div>
+          </NFormItem>
+        </template>
+
+        <!-- 空 main_domains 警告 -->
+        <NAlert
+          v-if="formModel.main_domains.length === 0"
+          type="warning"
+          class="mb-4"
+          :bordered="false"
+        >
+          空值表示全量同步所有 zone 下的记录
+        </NAlert>
 
         <NFormItem label="扩展配置" path="config_json">
           <NInput
@@ -260,7 +409,7 @@ function handleClose() {
       <template #footer>
         <NSpace justify="end">
           <NButton :disabled="submitting" @click="handleClose">取消</NButton>
-          <NButton type="primary" :loading="submitting" @click="onSubmit">
+          <NButton type="primary" :loading="submitting" :disabled="scanning" @click="onSubmit">
             {{ isEdit ? '保存' : '创建' }}
           </NButton>
         </NSpace>

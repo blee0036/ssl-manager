@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { h } from 'vue';
+import { computed, h } from 'vue';
 import type { DataTableColumns } from 'naive-ui';
 import { NDataTable, NButton, NSpace } from 'naive-ui';
 import StatusBadge from '@/components/common/StatusBadge.vue';
@@ -10,20 +10,26 @@ interface Props {
   data: Api.MachineCertificate[];
   loading: boolean;
   certNameMap?: Record<string, string>;
+  deployingIds?: Set<string>;
+  deletingIds?: Set<string>;
 }
 
 interface Emits {
+  (e: 'edit', config: Api.MachineCertificate): void;
   (e: 'delete', config: Api.MachineCertificate): void;
   (e: 'deploy', config: Api.MachineCertificate): void;
   (e: 'viewLog', config: Api.MachineCertificate): void;
 }
 
-const props = defineProps<Props>();
+const props = withDefaults(defineProps<Props>(), {
+  deployingIds: () => new Set<string>(),
+  deletingIds: () => new Set<string>(),
+});
 const emit = defineEmits<Emits>();
 
 const { canWrite } = usePermission();
 
-const columns: DataTableColumns<Api.MachineCertificate> = [
+const columns = computed<DataTableColumns<Api.MachineCertificate>>(() => [
   {
     title: '证书',
     key: 'certificate_id',
@@ -76,8 +82,11 @@ const columns: DataTableColumns<Api.MachineCertificate> = [
   {
     title: '操作',
     key: 'actions',
-    width: 220,
+    width: 260,
     render(row) {
+      const isDeploying = props.deployingIds.has(row.id);
+      const isDeleting = props.deletingIds.has(row.id);
+      const isRowBusy = isDeploying || isDeleting;
       const buttons = [
         h(
           NButton,
@@ -85,6 +94,7 @@ const columns: DataTableColumns<Api.MachineCertificate> = [
             size: 'small',
             type: 'info',
             quaternary: true,
+            disabled: isRowBusy,
             onClick: () => emit('viewLog', row),
           },
           { default: () => '日志' }
@@ -97,8 +107,21 @@ const columns: DataTableColumns<Api.MachineCertificate> = [
             NButton,
             {
               size: 'small',
+              type: 'default',
+              quaternary: true,
+              disabled: isRowBusy,
+              onClick: () => emit('edit', row),
+            },
+            { default: () => '编辑' }
+          ),
+          h(
+            NButton,
+            {
+              size: 'small',
               type: 'primary',
               quaternary: true,
+              loading: isDeploying,
+              disabled: isRowBusy,
               onClick: () => emit('deploy', row),
             },
             { default: () => '手动部署' }
@@ -109,6 +132,8 @@ const columns: DataTableColumns<Api.MachineCertificate> = [
               size: 'small',
               type: 'error',
               quaternary: true,
+              loading: isDeleting,
+              disabled: isRowBusy,
               onClick: () => emit('delete', row),
             },
             { default: () => '删除' }
@@ -119,7 +144,7 @@ const columns: DataTableColumns<Api.MachineCertificate> = [
       return h(NSpace, { size: 'small' }, { default: () => buttons });
     },
   },
-];
+]);
 </script>
 
 <template>

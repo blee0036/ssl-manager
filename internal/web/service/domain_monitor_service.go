@@ -146,6 +146,19 @@ func (s *DomainMonitorService) Update(ctx context.Context, id string, input mode
 	if input.MonitorEnabled != nil {
 		updates["monitor_enabled"] = *input.MonitorEnabled
 	}
+	if input.AlertIgnored != nil {
+		updates["alert_ignored"] = *input.AlertIgnored
+	}
+
+	// If alert_ignored is being set to true, suppress active alerts first.
+	// Order: suppress → update. If suppress fails, alert_ignored won't be persisted.
+	if input.AlertIgnored != nil && *input.AlertIgnored {
+		if s.alerter != nil {
+			if err := s.alerter.SuppressActiveByTarget(ctx, "domain", id); err != nil {
+				return nil, fmt.Errorf("failed to suppress active alerts: %w", err)
+			}
+		}
+	}
 
 	if err := s.domainRepo.Update(ctx, id, updates); err != nil {
 		return nil, fmt.Errorf("failed to update domain: %w", err)
@@ -165,6 +178,12 @@ func (s *DomainMonitorService) Delete(ctx context.Context, id string) error {
 // List returns domain monitors with optional filtering.
 func (s *DomainMonitorService) List(ctx context.Context, filter model.DomainFilter) ([]*model.Domain, error) {
 	return s.domainRepo.List(ctx, filter)
+}
+
+// ListWithSort delegates to DomainRepository.ListWithSort for server-side sort/filter/pagination.
+// Handler layer attaches latest monitor results separately.
+func (s *DomainMonitorService) ListWithSort(ctx context.Context, params model.DomainListParams) ([]*model.Domain, int, error) {
+	return s.domainRepo.ListWithSort(ctx, params)
 }
 
 // GetLatestMonitorResult retrieves the most recent monitor result for a domain.
@@ -304,6 +323,11 @@ func (s *DomainMonitorService) ProbeAll(ctx context.Context) error {
 
 // triggerAlert sends an alert for domain monitoring issues.
 func (s *DomainMonitorService) triggerAlert(ctx context.Context, domain *model.Domain, alertType, message string) {
+	// Skip alert for ignored domains
+	if domain.AlertIgnored {
+		return
+	}
+
 	if s.alerter == nil {
 		return
 	}

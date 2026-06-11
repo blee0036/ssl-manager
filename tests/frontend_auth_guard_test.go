@@ -164,8 +164,10 @@ func TestAuthGuard_Property3_UnauthorizedCleanup(t *testing.T) {
 	// Sub-property 3e: handleUnauthorized redirects to /login
 	properties.Property("handleUnauthorized redirects to /login", prop.ForAll(
 		func(_ string) bool {
+			// Accept either router.push or window.location.href redirect to /login
 			hasRouterPush := strings.Contains(source, "router.push('/login')")
-			return hasRouterPush
+			hasLocationRedirect := strings.Contains(source, "window.location.href = '/login'")
+			return hasRouterPush || hasLocationRedirect
 		},
 		gen.AlphaString(),
 	))

@@ -11,24 +11,24 @@ export async function fetchUsers(params: FetchParams): Promise<FetchResult<Api.U
 
 /** 创建用户 */
 export async function createUser(data: { username: string; password: string; role: string }) {
-  const res = await request.post<Api.Response<Api.User>>('/api/users', data);
+  const res = await request.post<Api.Response<Api.User>>('/api/users', data, { skipErrorNotify: true });
   return adaptResponse<Api.User>(res.data);
 }
 
 /** 修改用户角色 — PUT /api/users/{id} with body { role } */
 export async function updateUserRole(id: string, role: string) {
-  const res = await request.put<Api.Response<null>>(`/api/users/${id}`, { role });
+  const res = await request.put<Api.Response<null>>(`/api/users/${id}`, { role }, { skipErrorNotify: true } as any);
   return res.data;
 }
 
 /** 禁用用户 */
 export async function disableUser(id: string) {
-  const res = await request.post<Api.Response<null>>(`/api/users/${id}/disable`);
+  const res = await request.post<Api.Response<null>>(`/api/users/${id}/disable`, null, { skipErrorNotify: true } as any);
   return res.data;
 }
 
 /** 重置用户密码 */
 export async function resetUserPassword(id: string, password: string) {
-  const res = await request.post<Api.Response<null>>(`/api/users/${id}/reset-password`, { new_password: password });
+  const res = await request.post<Api.Response<null>>(`/api/users/${id}/reset-password`, { new_password: password }, { skipErrorNotify: true } as any);
   return res.data;
 }

@@ -21,19 +21,38 @@ export async function createMachineCertificate(
 ) {
   const res = await request.post<Api.Response<Api.MachineCertificate>>(
     `/api/machines/${machineId}/certificates`,
-    data
+    data,
+    { skipErrorNotify: true }
+  );
+  return adaptResponse<Api.MachineCertificate>(res.data);
+}
+
+/** 更新部署配置 */
+export async function updateMachineCertificate(
+  machineId: string,
+  configId: string,
+  data: {
+    cert_path?: string;
+    private_key_path?: string;
+    post_deploy_commands?: string;
+  }
+) {
+  const res = await request.put<Api.Response<Api.MachineCertificate>>(
+    `/api/machines/${machineId}/certificates/${configId}`,
+    data,
+    { skipErrorNotify: true } as any
   );
   return adaptResponse<Api.MachineCertificate>(res.data);
 }
 
 /** 删除部署配置 */
 export async function deleteMachineCertificate(machineId: string, configId: string) {
-  await request.delete(`/api/machines/${machineId}/certificates/${configId}`);
+  await request.delete(`/api/machines/${machineId}/certificates/${configId}`, { skipErrorNotify: true } as any);
 }
 
 /** 手动触发部署 */
 export async function triggerDeploy(machineId: string, configId: string) {
-  await request.post(`/api/machines/${machineId}/certificates/${configId}/deploy`);
+  await request.post(`/api/machines/${machineId}/certificates/${configId}/deploy`, null, { skipErrorNotify: true } as any);
 }
 
 /** 获取部署日志 — GET /api/machines/{machine_id}/certificates/{mc_id}/deployment-logs */

@@ -39,6 +39,9 @@ func setupThirdpartDNSTestDB(t *testing.T) *sql.DB {
 		records_count INTEGER NOT NULL DEFAULT 0,
 		status TEXT NOT NULL CHECK(status IN ('success', 'failed')),
 		error_message TEXT DEFAULT '',
+		new_domains TEXT DEFAULT '[]',
+		updated_domains TEXT DEFAULT '[]',
+		removed_domains TEXT DEFAULT '[]',
 		synced_at TEXT NOT NULL
 	)`)
 	if err != nil {
@@ -235,6 +238,9 @@ func TestThirdpartDNSRepository_Delete(t *testing.T) {
 		ThirdpartDNSID: config.ID,
 		RecordsCount:   5,
 		Status:         "success",
+		NewDomains:     `[]`,
+		UpdatedDomains: `[]`,
+		RemovedDomains: `[]`,
 		SyncedAt:       time.Now().UTC(),
 	}
 	if err := repo.SaveSyncLog(ctx, syncLog); err != nil {
@@ -291,11 +297,14 @@ func TestThirdpartDNSRepository_SaveSyncLog(t *testing.T) {
 		t.Fatalf("Create failed: %v", err)
 	}
 
-	// Save a sync log
+	// Save a sync log with new domain fields
 	syncLog := &model.ThirdpartDNSSyncLog{
 		ThirdpartDNSID: config.ID,
 		RecordsCount:   10,
 		Status:         "success",
+		NewDomains:     `["new1.com","new2.com"]`,
+		UpdatedDomains: `["updated1.com"]`,
+		RemovedDomains: `["removed1.com"]`,
 		SyncedAt:       time.Now().UTC(),
 	}
 
@@ -305,6 +314,24 @@ func TestThirdpartDNSRepository_SaveSyncLog(t *testing.T) {
 
 	if syncLog.ID == "" {
 		t.Fatal("expected sync log ID to be generated")
+	}
+
+	// Verify reading back
+	logs, err := repo.GetSyncLogs(ctx, config.ID)
+	if err != nil {
+		t.Fatalf("GetSyncLogs failed: %v", err)
+	}
+	if len(logs) != 1 {
+		t.Fatalf("expected 1 log, got %d", len(logs))
+	}
+	if logs[0].NewDomains != `["new1.com","new2.com"]` {
+		t.Errorf("expected new_domains '[\"new1.com\",\"new2.com\"]', got '%s'", logs[0].NewDomains)
+	}
+	if logs[0].UpdatedDomains != `["updated1.com"]` {
+		t.Errorf("expected updated_domains '[\"updated1.com\"]', got '%s'", logs[0].UpdatedDomains)
+	}
+	if logs[0].RemovedDomains != `["removed1.com"]` {
+		t.Errorf("expected removed_domains '[\"removed1.com\"]', got '%s'", logs[0].RemovedDomains)
 	}
 }
 
@@ -333,6 +360,9 @@ func TestThirdpartDNSRepository_GetSyncLogs(t *testing.T) {
 			ThirdpartDNSID: config.ID,
 			RecordsCount:   i * 5,
 			Status:         "success",
+			NewDomains:     `[]`,
+			UpdatedDomains: `[]`,
+			RemovedDomains: `[]`,
 			SyncedAt:       now.Add(time.Duration(i) * time.Minute),
 		}
 		if err := repo.SaveSyncLog(ctx, syncLog); err != nil {
@@ -340,12 +370,15 @@ func TestThirdpartDNSRepository_GetSyncLogs(t *testing.T) {
 		}
 	}
 
-	// Save a failed log
+	// Save a failed log with domain details
 	failedLog := &model.ThirdpartDNSSyncLog{
 		ThirdpartDNSID: config.ID,
 		RecordsCount:   0,
 		Status:         "failed",
 		ErrorMessage:   "connection timeout",
+		NewDomains:     `["a.com"]`,
+		UpdatedDomains: `["b.com"]`,
+		RemovedDomains: `["c.com"]`,
 		SyncedAt:       now.Add(5 * time.Minute),
 	}
 	if err := repo.SaveSyncLog(ctx, failedLog); err != nil {
@@ -367,6 +400,15 @@ func TestThirdpartDNSRepository_GetSyncLogs(t *testing.T) {
 	}
 	if logs[0].ErrorMessage != "connection timeout" {
 		t.Errorf("expected error message 'connection timeout', got '%s'", logs[0].ErrorMessage)
+	}
+	if logs[0].NewDomains != `["a.com"]` {
+		t.Errorf("expected new_domains '[\"a.com\"]', got '%s'", logs[0].NewDomains)
+	}
+	if logs[0].UpdatedDomains != `["b.com"]` {
+		t.Errorf("expected updated_domains '[\"b.com\"]', got '%s'", logs[0].UpdatedDomains)
+	}
+	if logs[0].RemovedDomains != `["c.com"]` {
+		t.Errorf("expected removed_domains '[\"c.com\"]', got '%s'", logs[0].RemovedDomains)
 	}
 }
 
@@ -398,5 +440,55 @@ func TestThirdpartDNSRepository_EmptyMainDomains(t *testing.T) {
 	}
 	if len(got.MainDomains) != 0 {
 		t.Errorf("expected 0 main domains, got %d", len(got.MainDomains))
+	}
+}
+
+func TestThirdpartDNSRepository_GetSyncLogs_COALESCEBackwardCompat(t *testing.T) {
+	db := setupThirdpartDNSTestDB(t)
+	repo := NewThirdpartDNSRepository(db)
+	ctx := context.Background()
+
+	// Create a config
+	config := &model.ThirdpartDNS{
+		Name:        "Test Config",
+		Type:        "cloudflare",
+		APIToken:    "token",
+		ConfigJSON:  "{}",
+		MainDomains: []string{},
+		Enabled:     true,
+	}
+	if err := repo.Create(ctx, config); err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	// Insert an old-style sync log directly (without the new columns, simulating NULL values)
+	_, err := db.ExecContext(ctx, `INSERT INTO thirdpart_dns_sync_logs
+		(id, thirdpart_dns_id, records_count, status, error_message, new_domains, updated_domains, removed_domains, synced_at)
+		VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, ?)`,
+		"old-log-id", config.ID, 5, "success", "", time.Now().UTC().Format(time.RFC3339),
+	)
+	if err != nil {
+		t.Fatalf("failed to insert old-style sync log: %v", err)
+	}
+
+	// GetSyncLogs should handle NULL gracefully via COALESCE
+	logs, err := repo.GetSyncLogs(ctx, config.ID)
+	if err != nil {
+		t.Fatalf("GetSyncLogs failed: %v", err)
+	}
+
+	if len(logs) != 1 {
+		t.Fatalf("expected 1 log, got %d", len(logs))
+	}
+
+	// COALESCE should return '[]' for NULL columns
+	if logs[0].NewDomains != "[]" {
+		t.Errorf("expected new_domains '[]' for old row, got '%s'", logs[0].NewDomains)
+	}
+	if logs[0].UpdatedDomains != "[]" {
+		t.Errorf("expected updated_domains '[]' for old row, got '%s'", logs[0].UpdatedDomains)
+	}
+	if logs[0].RemovedDomains != "[]" {
+		t.Errorf("expected removed_domains '[]' for old row, got '%s'", logs[0].RemovedDomains)
 	}
 }

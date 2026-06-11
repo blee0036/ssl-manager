@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, h } from 'vue';
+import { ref, reactive, h } from 'vue';
 import {
   NCard, NSpace, NButton, NDataTable, NTag, NInput, NIcon, NResult,
   useMessage, useDialog,
@@ -13,10 +13,16 @@ import { useTable } from '@/hooks/useTable';
 import { useAuthStore } from '@/store';
 import { fetchUsers, updateUserRole, disableUser, resetUserPassword } from '@/service/api/user';
 import { formatDateTime } from '@/utils/date';
+import { getApiErrorMessage } from '@/utils/error';
 
 const message = useMessage();
 const dialog = useDialog();
 const authStore = useAuthStore();
+
+// Per-row loading Sets
+const disablingIds = reactive(new Set<string>());
+const roleChangingIds = reactive(new Set<string>());
+const resetPwdIds = reactive(new Set<string>());
 
 // Table
 const { data, loading, error, pagination, refresh } = useTable<Api.User>({
@@ -45,12 +51,15 @@ function handleChangeRole(user: Api.User) {
     positiveText: '确定',
     negativeText: '取消',
     onPositiveClick: async () => {
+      roleChangingIds.add(user.id);
       try {
         await updateUserRole(user.id, newRole);
         message.success('角色修改成功');
         refresh();
-      } catch {
-        message.error('角色修改失败');
+      } catch (err: unknown) {
+        message.error(getApiErrorMessage(err, '角色修改失败'));
+      } finally {
+        roleChangingIds.delete(user.id);
       }
     },
   });
@@ -68,16 +77,19 @@ function handleDisableClick(user: Api.User) {
 
 async function handleDisableConfirm() {
   if (!disablingUser.value) return;
+  const id = disablingUser.value.id;
   disableLoading.value = true;
+  disablingIds.add(id);
   try {
-    await disableUser(disablingUser.value.id);
+    await disableUser(id);
     message.success('用户已禁用');
     showDisableConfirm.value = false;
     refresh();
-  } catch {
-    message.error('禁用失败');
+  } catch (err: unknown) {
+    message.error(getApiErrorMessage(err, '禁用失败'));
   } finally {
     disableLoading.value = false;
+    disablingIds.delete(id);
   }
 }
 
@@ -108,11 +120,14 @@ function handleResetPassword(user: Api.User) {
         message.warning('密码长度至少 6 个字符');
         return false;
       }
+      resetPwdIds.add(user.id);
       try {
         await resetUserPassword(user.id, resetPasswordValue.value);
         message.success('密码重置成功');
-      } catch {
-        message.error('密码重置失败');
+      } catch (err: unknown) {
+        message.error(getApiErrorMessage(err, '密码重置失败'));
+      } finally {
+        resetPwdIds.delete(user.id);
       }
     },
   });
@@ -170,6 +185,10 @@ const columns: DataTableColumns<Api.User> = [
     width: 260,
     render(row) {
       const isSelf = row.username === authStore.username;
+      const isRoleChanging = roleChangingIds.has(row.id);
+      const isDisabling = disablingIds.has(row.id);
+      const isResettingPwd = resetPwdIds.has(row.id);
+      const isRowBusy = isRoleChanging || isDisabling || isResettingPwd;
       return h(NSpace, { size: 'small' }, {
         default: () => [
           h(
@@ -178,6 +197,8 @@ const columns: DataTableColumns<Api.User> = [
               size: 'small',
               quaternary: true,
               type: 'info',
+              loading: isRoleChanging,
+              disabled: isRowBusy,
               onClick: () => handleChangeRole(row),
             },
             { default: () => '修改角色' },
@@ -188,7 +209,8 @@ const columns: DataTableColumns<Api.User> = [
               size: 'small',
               quaternary: true,
               type: 'error',
-              disabled: isSelf || !row.enabled,
+              loading: isDisabling,
+              disabled: isSelf || !row.enabled || isRowBusy,
               onClick: () => handleDisableClick(row),
               title: isSelf ? '不能禁用自己' : undefined,
             },
@@ -200,6 +222,8 @@ const columns: DataTableColumns<Api.User> = [
               size: 'small',
               quaternary: true,
               type: 'warning',
+              loading: isResettingPwd,
+              disabled: isRowBusy,
               onClick: () => handleResetPassword(row),
             },
             { default: () => '重置密码' },

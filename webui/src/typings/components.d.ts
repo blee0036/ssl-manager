@@ -12,6 +12,7 @@ declare module 'vue' {
     EmptyState: typeof import('./../components/common/EmptyState.vue')['default']
     GlobalApiErrorHandler: typeof import('./../components/GlobalApiErrorHandler.vue')['default']
     LogViewer: typeof import('./../components/LogViewer/index.vue')['default']
+    NPagination: typeof import('naive-ui')['NPagination']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
     StatusBadge: typeof import('./../components/common/StatusBadge.vue')['default']

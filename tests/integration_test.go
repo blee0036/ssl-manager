@@ -79,6 +79,8 @@ func (m *mockAlertSender) SendAlert(_ context.Context, _, _, _, _, _, _ string) 
 
 func (m *mockAlertSender) AutoResolve(_ context.Context, _, _, _ string) {}
 
+func (m *mockAlertSender) SuppressActiveByTarget(_ context.Context, _, _ string) error { return nil }
+
 // setupTestApp creates a full application stack with real database and router for integration testing.
 func setupTestApp(t *testing.T) *testApp {
 	t.Helper()

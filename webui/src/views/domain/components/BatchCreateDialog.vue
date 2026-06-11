@@ -17,6 +17,7 @@ import {
 } from 'naive-ui';
 import { useBatchRequest } from '@/hooks/useBatchRequest';
 import { createDomain, fetchDomains } from '@/service/api/domain';
+import type { CreateDomainResponse } from '@/service/api/domain';
 
 interface Props {
   show: boolean;
@@ -45,7 +46,7 @@ const batchResult = ref<Api.BatchDomainResult>({
   invalid: [],
 });
 
-const { execute, progress, isRunning } = useBatchRequest<string, Api.Domain>(
+const { execute, progress, isRunning } = useBatchRequest<string, CreateDomainResponse>(
   async (domainName: string) => {
     return await createDomain({ name: domainName });
   }
@@ -125,11 +126,20 @@ async function onSubmit() {
     return;
   }
 
-  // 检查系统中已存在的域名
+  // 检查系统中已存在的域名（循环分页获取全部）
   let existingNames = new Set<string>();
   try {
-    const existing = await fetchDomains({ page: 1, pageSize: 10000 });
-    existingNames = new Set(existing.items.map((d) => d.name.toLowerCase()));
+    let page = 1;
+    const perPage = 100;
+    let hasMore = true;
+    while (hasMore) {
+      const result = await fetchDomains({ page, per_page: perPage });
+      for (const d of result.items) {
+        existingNames.add(d.name.toLowerCase());
+      }
+      hasMore = result.items.length === perPage && existingNames.size < result.total;
+      page++;
+    }
   } catch {
     // 获取失败时不阻塞，继续提交（后端会返回错误）
   }
@@ -152,9 +162,18 @@ async function onSubmit() {
   // 使用 useBatchRequest 并发调用 POST /api/domains
   const result = await execute(domainsToCreate);
 
-  // 分类结果
+  // 分类结果，同时统计探测异常
+  let probeAnomalyCount = 0;
+
   for (const item of result.success) {
     batchResult.value.success.push(item.name);
+    // 统计探测异常：probe_result 中 tls_success 为 false 或有 error_message，或存在 probe_error
+    if (
+      (item.probe_result && (!item.probe_result.tls_success || item.probe_result.error_message)) ||
+      item.probe_error
+    ) {
+      probeAnomalyCount++;
+    }
   }
 
   for (const item of result.failed) {
@@ -171,6 +190,13 @@ async function onSubmit() {
   showResult.value = true;
 
   if (batchResult.value.success.length > 0) {
+    // 显示汇总通知（包含探测异常统计）
+    const successCount = batchResult.value.success.length;
+    if (probeAnomalyCount > 0) {
+      message.warning(`批量新增完成，成功 ${successCount} 个，探测异常 ${probeAnomalyCount} 个`);
+    } else {
+      message.success(`批量新增完成，成功 ${successCount} 个`);
+    }
     emit('success');
   }
 }

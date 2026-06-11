@@ -32,7 +32,7 @@ func (m *mockCFClient) ListZones(ctx context.Context, token string) ([]service.Z
 
 func (m *mockCFClient) ListDNSRecords(ctx context.Context, token string, zoneID string, types []string) ([]service.DNSRecord, error) {
 	return []service.DNSRecord{
-		{Name: "www.example.com", Type: "A", Value: "1.2.3.4"},
+		{ID: "rec-1", Name: "www.example.com", Type: "A", Value: "1.2.3.4"},
 	}, nil
 }
 
@@ -67,6 +67,9 @@ func setupThirdpartDNSTestDB(t *testing.T) *sql.DB {
 		records_count INTEGER NOT NULL DEFAULT 0,
 		status TEXT NOT NULL CHECK(status IN ('success', 'failed')),
 		error_message TEXT DEFAULT '',
+		new_domains TEXT DEFAULT '[]',
+		updated_domains TEXT DEFAULT '[]',
+		removed_domains TEXT DEFAULT '[]',
 		synced_at TEXT NOT NULL
 	)`)
 	if err != nil {
@@ -79,6 +82,7 @@ func setupThirdpartDNSTestDB(t *testing.T) *sql.DB {
 		name TEXT NOT NULL,
 		source TEXT DEFAULT 'manual' CHECK(source IN ('manual', 'certificate', 'cloudflare')),
 		thirdpart_dns_id TEXT DEFAULT '',
+		dns_record_id TEXT DEFAULT '',
 		dns_record_type TEXT DEFAULT '',
 		dns_record_value TEXT DEFAULT '',
 		monitor_port INTEGER NOT NULL DEFAULT 443,
@@ -86,11 +90,32 @@ func setupThirdpartDNSTestDB(t *testing.T) *sql.DB {
 		linked_certificate_id TEXT,
 		linked_machine_certificate_id TEXT,
 		monitor_enabled INTEGER NOT NULL DEFAULT 1,
+		alert_ignored INTEGER NOT NULL DEFAULT 0,
 		created_at TEXT NOT NULL,
 		updated_at TEXT NOT NULL
 	)`)
 	if err != nil {
 		t.Fatalf("failed to create domains table: %v", err)
+	}
+
+	// Create domain_monitor_results table (needed for domainRepo.Delete cascade)
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS domain_monitor_results (
+		id TEXT PRIMARY KEY,
+		domain_id TEXT NOT NULL REFERENCES domains(id),
+		checked_port INTEGER NOT NULL DEFAULT 443,
+		resolved_ips TEXT DEFAULT '',
+		tls_success INTEGER NOT NULL DEFAULT 0,
+		certificate_fingerprint_sha256 TEXT DEFAULT '',
+		issuer TEXT DEFAULT '',
+		expire_at TEXT DEFAULT '',
+		days_remaining INTEGER DEFAULT 0,
+		domain_matched INTEGER NOT NULL DEFAULT 0,
+		chain_valid INTEGER NOT NULL DEFAULT 1,
+		error_message TEXT DEFAULT '',
+		checked_at TEXT NOT NULL
+	)`)
+	if err != nil {
+		t.Fatalf("failed to create domain_monitor_results table: %v", err)
 	}
 
 	t.Cleanup(func() { db.Close() })
@@ -111,13 +136,18 @@ func setupThirdpartDNSHandler(t *testing.T) (*ThirdpartDNSHandler, *chi.Mux, *sq
 	// Setup router without auth middleware for testing
 	r := chi.NewRouter()
 	r.Route("/api/thirdpart-dns", func(r chi.Router) {
+		// Static routes must be registered before /{id}
+		r.Post("/scan-zones", handler.ScanZones)
+
 		r.Get("/", handler.List)
 		r.Post("/", handler.Create)
-		r.Get("/{id}", handler.GetByID)
-		r.Put("/{id}", handler.Update)
-		r.Delete("/{id}", handler.Delete)
-		r.Post("/{id}/sync", handler.TriggerSync)
-		r.Get("/{id}/sync-logs", handler.GetSyncLogs)
+		r.Route("/{id}", func(r chi.Router) {
+			r.Get("/", handler.GetByID)
+			r.Put("/", handler.Update)
+			r.Delete("/", handler.Delete)
+			r.Post("/sync", handler.TriggerSync)
+			r.Get("/sync-logs", handler.GetSyncLogs)
+		})
 	})
 
 	return handler, r, db
@@ -248,6 +278,84 @@ func TestThirdpartDNSHandler_Create_Success(t *testing.T) {
 	}
 	if data["enabled"] != true {
 		t.Errorf("expected enabled true, got %v", data["enabled"])
+	}
+
+	// Verify auto-sync was triggered and sync_result is present
+	syncResult, hasSyncResult := data["sync_result"]
+	if !hasSyncResult || syncResult == nil {
+		t.Errorf("expected sync_result field in response, got nil")
+	} else {
+		sr, ok := syncResult.(map[string]interface{})
+		if !ok {
+			t.Fatalf("expected sync_result to be a map, got %T", syncResult)
+		}
+		if sr["records_count"].(float64) != 1 {
+			t.Errorf("expected sync_result.records_count=1, got %v", sr["records_count"])
+		}
+	}
+
+	// sync_error should be absent (omitempty) when sync succeeds
+	if syncErr, hasSyncErr := data["sync_error"]; hasSyncErr && syncErr != "" {
+		t.Errorf("expected no sync_error on success, got '%v'", syncErr)
+	}
+}
+
+func TestThirdpartDNSHandler_Create_SyncFailure_StillReturns201(t *testing.T) {
+	db := setupThirdpartDNSTestDB(t)
+	dnsRepo := repository.NewThirdpartDNSRepository(db)
+	domainRepo := repository.NewDomainRepository(db)
+	// Use nil cfClient to simulate sync failure (cfClient not configured)
+	dnsService := service.NewThirdpartDNSService(dnsRepo, domainRepo, nil, nil, config.NewRuntimeConfig(config.DefaultConfig()))
+	handler := NewThirdpartDNSHandler(dnsService)
+
+	router := chi.NewRouter()
+	router.Route("/api/thirdpart-dns", func(r chi.Router) {
+		r.Post("/", handler.Create)
+	})
+
+	body := map[string]interface{}{
+		"name":         "My Cloudflare",
+		"type":         "cloudflare",
+		"api_token":    "cf-api-token-123",
+		"config_json":  "{}",
+		"main_domains": []string{"example.com"},
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/thirdpart-dns", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	// Config is created successfully, sync fails but returns 201
+	if w.Code != http.StatusCreated {
+		t.Errorf("expected status 201 even when sync fails, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	var resp model.SuccessResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+
+	data, ok := resp.Data.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected data to be a map, got %T", resp.Data)
+	}
+
+	// Config fields should still be present
+	if data["name"] != "My Cloudflare" {
+		t.Errorf("expected name 'My Cloudflare', got '%v'", data["name"])
+	}
+
+	// sync_error should be present
+	syncErr, hasSyncErr := data["sync_error"]
+	if !hasSyncErr || syncErr == "" {
+		t.Errorf("expected sync_error field when sync fails, got '%v'", syncErr)
+	}
+
+	// sync_result should be absent (omitempty)
+	if syncResult, has := data["sync_result"]; has && syncResult != nil {
+		t.Errorf("expected no sync_result when sync fails, got '%v'", syncResult)
 	}
 }
 
@@ -495,8 +603,8 @@ func TestThirdpartDNSHandler_TriggerSync_Success(t *testing.T) {
 		t.Fatalf("failed to unmarshal response: %v", err)
 	}
 
-	if resp.Message != "DNS sync completed" {
-		t.Errorf("expected message 'DNS sync completed', got '%s'", resp.Message)
+	if resp.Message != "sync completed" {
+		t.Errorf("expected message 'sync completed', got '%s'", resp.Message)
 	}
 
 	// Verify sync result
@@ -550,8 +658,8 @@ func TestThirdpartDNSHandler_TriggerSync_Disabled(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("expected status 500, got %d; body: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status 400, got %d; body: %s", w.Code, w.Body.String())
 	}
 }
 

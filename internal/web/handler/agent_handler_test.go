@@ -54,6 +54,10 @@ func (m *mockAgentAlertSender) SendAlert(_ context.Context, _, _, _, _, _, _ str
 
 func (m *mockAgentAlertSender) AutoResolve(_ context.Context, _, _, _ string) {}
 
+func (m *mockAgentAlertSender) SuppressActiveByTarget(_ context.Context, _, _ string) error {
+	return nil
+}
+
 // Verify interface compliance.
 var _ middleware.MachineRepository = (*mockMachineRepo)(nil)
 

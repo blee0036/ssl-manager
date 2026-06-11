@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { h } from 'vue';
+import { computed, h } from 'vue';
 import type { DataTableColumns } from 'naive-ui';
 import { NDataTable, NButton, NSpace, NTag } from 'naive-ui';
 import StatusBadge from '@/components/common/StatusBadge.vue';
@@ -10,6 +10,9 @@ interface Props {
   data: Api.Machine[];
   loading: boolean;
   pagination: object;
+  deletingIds?: Set<string>;
+  regeneratingIds?: Set<string>;
+  revokingIds?: Set<string>;
 }
 
 interface Emits {
@@ -19,12 +22,16 @@ interface Emits {
   (e: 'deploy', machine: Api.Machine): void;
 }
 
-defineProps<Props>();
+const props = withDefaults(defineProps<Props>(), {
+  deletingIds: () => new Set<string>(),
+  regeneratingIds: () => new Set<string>(),
+  revokingIds: () => new Set<string>(),
+});
 const emit = defineEmits<Emits>();
 
 const { canWrite } = usePermission();
 
-const columns: DataTableColumns<Api.Machine> = [
+const columns = computed<DataTableColumns<Api.Machine>>(() => [
   {
     title: '名称',
     key: 'name',
@@ -76,6 +83,10 @@ const columns: DataTableColumns<Api.Machine> = [
     key: 'actions',
     width: 300,
     render(row) {
+      const isDeleting = props.deletingIds.has(row.id);
+      const isRegenerating = props.regeneratingIds.has(row.id);
+      const isRevoking = props.revokingIds.has(row.id);
+      const isRowBusy = isDeleting || isRegenerating || isRevoking;
       const buttons: ReturnType<typeof h>[] = [];
 
       // "部署配置" 按钮始终展示给所有角色（包括 readonly）
@@ -86,6 +97,7 @@ const columns: DataTableColumns<Api.Machine> = [
             size: 'small',
             type: 'info',
             quaternary: true,
+            disabled: isRowBusy,
             onClick: () => emit('deploy', row),
           },
           { default: () => '部署配置' }
@@ -101,6 +113,8 @@ const columns: DataTableColumns<Api.Machine> = [
               size: 'small',
               type: 'warning',
               quaternary: true,
+              loading: isRegenerating,
+              disabled: isRowBusy,
               onClick: () => emit('regenerate', row),
             },
             { default: () => '重生成 Token' }
@@ -111,6 +125,8 @@ const columns: DataTableColumns<Api.Machine> = [
               size: 'small',
               type: 'warning',
               quaternary: true,
+              loading: isRevoking,
+              disabled: isRowBusy,
               onClick: () => emit('revoke', row),
             },
             { default: () => '吊销 Token' }
@@ -121,6 +137,8 @@ const columns: DataTableColumns<Api.Machine> = [
               size: 'small',
               type: 'error',
               quaternary: true,
+              loading: isDeleting,
+              disabled: isRowBusy,
               onClick: () => emit('delete', row),
             },
             { default: () => '删除' }
@@ -135,7 +153,7 @@ const columns: DataTableColumns<Api.Machine> = [
       );
     },
   },
-];
+]);
 </script>
 
 <template>

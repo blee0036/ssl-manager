@@ -131,11 +131,16 @@ declare namespace Api {
     id: string;
     name: string;
     source: string;
+    thirdpart_dns_id: string;
+    dns_record_type: string;
+    dns_record_value: string;
     monitor_port: number;
     linked_machine_id: string;
     linked_certificate_id: string;
     linked_machine_certificate_id: string;
     monitor_enabled: boolean;
+    alert_ignored: boolean;
+    dns_record_id: string;
     created_at: string;
     updated_at: string;
     latest_monitor_result?: DomainMonitorResult;
@@ -178,6 +183,34 @@ declare namespace Api {
     config_json: string;
     created_at: string;
     updated_at: string;
+  }
+
+  /** DNS 同步结果 */
+  interface DNSSyncResult {
+    records_count: number;
+    new_domains: string[];
+    updated_domains: string[];
+    removed_domains: string[];
+  }
+
+  /** 第三方 DNS 同步日志 */
+  interface ThirdpartDnsSyncLog {
+    id: string;
+    thirdpart_dns_id: string;
+    records_count: number;
+    status: string;
+    error_message: string;
+    new_domains: string;
+    updated_domains: string;
+    removed_domains: string;
+    synced_at: string;
+  }
+
+  /** Cloudflare Zone */
+  interface CloudflareZone {
+    id: string;
+    name: string;
+    status: string;
   }
 
   // === 告警 ===
@@ -261,6 +294,9 @@ declare namespace Api {
       enabled: boolean;
       site_key: string;
       secret_key: string;
+    };
+    thirdpart_dns?: {
+      sync_interval_minutes: number;
     };
   }
 

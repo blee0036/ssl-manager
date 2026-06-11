@@ -140,6 +140,7 @@ type SaveConfigInput struct {
 	Readonly      *config.ReadonlyConfig      `json:"readonly,omitempty"`
 	DomainMonitor *config.DomainMonitorConfig `json:"domain_monitor,omitempty"`
 	Turnstile     *config.TurnstileConfig     `json:"turnstile,omitempty"`
+	ThirdpartDNS  *config.ThirdpartDNSConfig  `json:"thirdpart_dns,omitempty"`
 }
 
 // SaveConfig saves the system configuration to config.json during initialization.
@@ -220,6 +221,10 @@ func (s *InitService) SaveConfig(ctx context.Context, input SaveConfigInput) (*c
 		cfg.Turnstile.Enabled = input.Turnstile.Enabled
 		cfg.Turnstile.SiteKey = input.Turnstile.SiteKey
 		cfg.Turnstile.SecretKey = input.Turnstile.SecretKey
+	}
+
+	if input.ThirdpartDNS != nil {
+		cfg.ThirdpartDNS.SyncIntervalMinutes = input.ThirdpartDNS.SyncIntervalMinutes
 	}
 
 	// Save config to file

@@ -22,6 +22,7 @@ type Config struct {
 	Readonly      ReadonlyConfig      `json:"readonly"`
 	DomainMonitor DomainMonitorConfig `json:"domain_monitor"`
 	Turnstile     TurnstileConfig     `json:"turnstile"`
+	ThirdpartDNS  ThirdpartDNSConfig  `json:"thirdpart_dns"`
 }
 
 // ServerConfig holds settings for the Web Backend server.
@@ -67,6 +68,11 @@ type TurnstileConfig struct {
 	SecretKey string `json:"secret_key"` // Turnstile secret key（仅后端使用，绝不下发前端）
 }
 
+// ThirdpartDNSConfig holds settings for third-party DNS sync scheduling.
+type ThirdpartDNSConfig struct {
+	SyncIntervalMinutes int `json:"sync_interval_minutes"` // 定时同步间隔分钟数，默认 360；<=0 禁用定时同步
+}
+
 // DefaultConfig returns a Config with sensible default values.
 func DefaultConfig() *Config {
 	return &Config{
@@ -99,6 +105,9 @@ func DefaultConfig() *Config {
 			SiteKey:   "",
 			SecretKey: "",
 		},
+		ThirdpartDNS: ThirdpartDNSConfig{
+			SyncIntervalMinutes: 360,
+		},
 	}
 }
 
@@ -113,6 +122,11 @@ func LoadConfig(path string) (*Config, error) {
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
+
+	// Note: LoadConfig unmarshals into DefaultConfig() which has SyncIntervalMinutes=360.
+	// If the JSON file has "thirdpart_dns": {"sync_interval_minutes": 0}, that 0 is an
+	// explicit "disabled" value and must be preserved. Old config files without the field
+	// will keep the default 360 from DefaultConfig(). No normalization needed here.
 
 	if err := ValidateConfig(cfg); err != nil {
 		return nil, fmt.Errorf("config validation failed: %w", err)

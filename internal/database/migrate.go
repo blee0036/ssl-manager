@@ -1,15 +1,67 @@
 package database
 
-import "fmt"
+import (
+	"database/sql"
+	"fmt"
+)
 
-// Migrate creates all database tables if they don't exist.
+// Migrate creates all database tables if they don't exist,
+// then runs idempotent column migrations for columns added in later versions.
 func (db *DB) Migrate() error {
 	for _, stmt := range migrationStatements {
 		if _, err := db.Exec(stmt); err != nil {
 			return fmt.Errorf("migration failed: %w\nStatement: %s", err, stmt)
 		}
 	}
+
+	// 幂等列迁移：旧库补列，新库/重复调用不报错
+	if err := db.migrateAddColumnIfNotExists("domains", "alert_ignored", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return fmt.Errorf("migrate alert_ignored column: %w", err)
+	}
+	if err := db.migrateAddColumnIfNotExists("domains", "dns_record_id", "TEXT DEFAULT ''"); err != nil {
+		return fmt.Errorf("migrate dns_record_id column: %w", err)
+	}
+	if err := db.migrateAddColumnIfNotExists("thirdpart_dns_sync_logs", "new_domains", "TEXT DEFAULT '[]'"); err != nil {
+		return fmt.Errorf("migrate new_domains column: %w", err)
+	}
+	if err := db.migrateAddColumnIfNotExists("thirdpart_dns_sync_logs", "updated_domains", "TEXT DEFAULT '[]'"); err != nil {
+		return fmt.Errorf("migrate updated_domains column: %w", err)
+	}
+	if err := db.migrateAddColumnIfNotExists("thirdpart_dns_sync_logs", "removed_domains", "TEXT DEFAULT '[]'"); err != nil {
+		return fmt.Errorf("migrate removed_domains column: %w", err)
+	}
+
 	return nil
+}
+
+// migrateAddColumnIfNotExists checks if a column exists in the table using PRAGMA table_info.
+// If the column does not exist, it executes ALTER TABLE ADD COLUMN.
+// Idempotent: returns nil silently when the column already exists.
+func (db *DB) migrateAddColumnIfNotExists(table, column, definition string) error {
+	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return nil // Column already exists
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	_, err = db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, definition))
+	return err
 }
 
 var migrationStatements = []string{

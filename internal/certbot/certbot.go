@@ -104,6 +104,11 @@ func (w *CertbotWrapper) IssueCertCloudflare(ctx context.Context, domains []stri
 		return nil, fmt.Errorf("cloudflare API token is required")
 	}
 
+	// Ensure all certbot directories exist before execution
+	if err := w.ensureDirectories(); err != nil {
+		return nil, err
+	}
+
 	// Create temporary credentials file for Cloudflare
 	credFile, err := w.createCloudflareCredentials(cloudflareToken)
 	if err != nil {
@@ -154,6 +159,11 @@ func (w *CertbotWrapper) StartManualDNSChallenge(ctx context.Context, domains []
 	}
 	if email == "" {
 		return nil, fmt.Errorf("email is required for Certbot registration")
+	}
+
+	// Ensure all certbot directories exist before execution
+	if err := w.ensureDirectories(); err != nil {
+		return nil, err
 	}
 
 	// Generate session ID
@@ -437,6 +447,29 @@ func (w *CertbotWrapper) ReadCertFiles(certbotOutputDir string) (*CertFiles, err
 	}, nil
 }
 
+// effectiveDataDir returns the certbot data directory.
+// Returns configured data_dir if non-empty, otherwise defaults to "./data/certbot".
+func (w *CertbotWrapper) effectiveDataDir() string {
+	cfg := w.runtimeCfg.Get().Certbot
+	if cfg.DataDir != "" {
+		return cfg.DataDir
+	}
+	return "./data/certbot"
+}
+
+// ensureDirectories creates all required certbot directories.
+// Must be called before any certbot execution.
+func (w *CertbotWrapper) ensureDirectories() error {
+	base := w.effectiveDataDir()
+	dirs := []string{base, filepath.Join(base, "work"), filepath.Join(base, "logs")}
+	for _, dir := range dirs {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("failed to create certbot directory %s: %w", dir, err)
+		}
+	}
+	return nil
+}
+
 // binaryPath returns the certbot binary path from configuration, defaulting to "certbot".
 func (w *CertbotWrapper) binaryPath() string {
 	cfg := w.runtimeCfg.Get().Certbot
@@ -447,19 +480,14 @@ func (w *CertbotWrapper) binaryPath() string {
 }
 
 // certOutputDir returns the expected Certbot output directory for a given domain.
-// Certbot stores certificates in /etc/letsencrypt/live/<domain>/ by default,
-// or in <data_dir>/live/<domain>/ if a custom config-dir is specified.
+// Uses effectiveDataDir() to ensure consistency with buildCertbotArgs.
 func (w *CertbotWrapper) certOutputDir(domain string) string {
-	cfg := w.runtimeCfg.Get().Certbot
-	if cfg.DataDir != "" {
-		return filepath.Join(cfg.DataDir, "live", domain)
-	}
-	return filepath.Join("/etc/letsencrypt", "live", domain)
+	return filepath.Join(w.effectiveDataDir(), "live", domain)
 }
 
 // buildCertbotArgs builds the common certbot certonly arguments.
+// Always passes --config-dir, --work-dir, --logs-dir using effectiveDataDir().
 func (w *CertbotWrapper) buildCertbotArgs(domains []string, email string) []string {
-	cfg := w.runtimeCfg.Get().Certbot
 	args := []string{"certonly"}
 
 	// Add domain flags
@@ -474,13 +502,12 @@ func (w *CertbotWrapper) buildCertbotArgs(domains []string, email string) []stri
 	args = append(args, "--agree-tos")
 	args = append(args, "--non-interactive")
 
-	// Use custom config-dir if specified, along with work-dir and logs-dir
-	// to ensure all certbot directories are writable (important for non-root Docker)
-	if cfg.DataDir != "" {
-		args = append(args, "--config-dir", cfg.DataDir)
-		args = append(args, "--work-dir", filepath.Join(cfg.DataDir, "work"))
-		args = append(args, "--logs-dir", filepath.Join(cfg.DataDir, "logs"))
-	}
+	// Always pass directory flags using effectiveDataDir() to ensure
+	// all certbot directories are writable (important for non-root Docker)
+	dataDir := w.effectiveDataDir()
+	args = append(args, "--config-dir", dataDir)
+	args = append(args, "--work-dir", filepath.Join(dataDir, "work"))
+	args = append(args, "--logs-dir", filepath.Join(dataDir, "logs"))
 
 	return args
 }

@@ -114,6 +114,10 @@ func (m *mockAgentAlertSender) SendAlert(_ context.Context, level, alertType, ti
 
 func (m *mockAgentAlertSender) AutoResolve(_ context.Context, _, _, _ string) {}
 
+func (m *mockAgentAlertSender) SuppressActiveByTarget(_ context.Context, _, _ string) error {
+	return nil
+}
+
 type mockAuditRepo struct {
 	logs []*model.AuditLog
 }

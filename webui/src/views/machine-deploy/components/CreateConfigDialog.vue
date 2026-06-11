@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { reactive, ref, watch } from 'vue';
+import { reactive, ref, computed, watch } from 'vue';
 import type { FormRules, SelectOption } from 'naive-ui';
 import { NModal, NCard, NForm, NFormItem, NInput, NSelect, NButton, NSpace, useMessage } from 'naive-ui';
 import { useForm } from '@/hooks/useForm';
-import { createMachineCertificate } from '@/service/api/machine-cert';
+import { createMachineCertificate, updateMachineCertificate } from '@/service/api/machine-cert';
 import { getCertificates } from '@/service/api/certificate';
 import { adaptListResponse } from '@/service/request';
 import { formatDate, daysUntil } from '@/utils/date';
@@ -11,6 +11,7 @@ import { formatDate, daysUntil } from '@/utils/date';
 interface Props {
   show: boolean;
   machineId: string;
+  editItem?: Api.MachineCertificate | null;
 }
 
 interface Emits {
@@ -18,9 +19,14 @@ interface Emits {
   (e: 'success'): void;
 }
 
-const props = defineProps<Props>();
+const props = withDefaults(defineProps<Props>(), {
+  editItem: null,
+});
 const emit = defineEmits<Emits>();
 const message = useMessage();
+
+const isEditMode = computed(() => !!props.editItem);
+const dialogTitle = computed(() => (isEditMode.value ? '编辑部署配置' : '新增部署配置'));
 
 const { formRef, submitting, submitError, handleSubmit, resetFields } = useForm();
 
@@ -31,11 +37,16 @@ const formModel = reactive({
   post_deploy_commands: '',
 });
 
-const rules: FormRules = {
-  certificate_id: [{ required: true, message: '请选择证书', trigger: 'change' }],
-  cert_path: [{ required: true, message: '请输入证书路径', trigger: 'blur' }],
-  private_key_path: [{ required: true, message: '请输入私钥路径', trigger: 'blur' }],
-};
+const rules = computed<FormRules>(() => {
+  const base: FormRules = {
+    cert_path: [{ required: true, message: '请输入证书路径', trigger: 'blur' }],
+    private_key_path: [{ required: true, message: '请输入私钥路径', trigger: 'blur' }],
+  };
+  if (!isEditMode.value) {
+    base.certificate_id = [{ required: true, message: '请选择证书', trigger: 'change' }];
+  }
+  return base;
+});
 
 const certOptions = ref<SelectOption[]>([]);
 const certLoading = ref(false);
@@ -65,25 +76,46 @@ watch(
   () => props.show,
   (val) => {
     if (val) {
-      formModel.certificate_id = null;
-      formModel.cert_path = '';
-      formModel.private_key_path = '';
-      formModel.post_deploy_commands = '';
       resetFields();
-      loadCertificates();
+      if (isEditMode.value && props.editItem) {
+        // Populate form with existing data for editing
+        formModel.certificate_id = props.editItem.certificate_id;
+        formModel.cert_path = props.editItem.cert_path;
+        formModel.private_key_path = props.editItem.private_key_path;
+        formModel.post_deploy_commands = props.editItem.post_deploy_commands || '';
+        // Still load certificates for display label in disabled select
+        loadCertificates();
+      } else {
+        formModel.certificate_id = null;
+        formModel.cert_path = '';
+        formModel.private_key_path = '';
+        formModel.post_deploy_commands = '';
+        loadCertificates();
+      }
     }
   }
 );
 
 async function onSubmit() {
   const success = await handleSubmit(async () => {
-    await createMachineCertificate(props.machineId, {
-      certificate_id: formModel.certificate_id!,
-      cert_path: formModel.cert_path,
-      private_key_path: formModel.private_key_path,
-      post_deploy_commands: formModel.post_deploy_commands || undefined,
-    });
-    message.success('部署配置创建成功');
+    if (isEditMode.value && props.editItem) {
+      // Edit mode: only submit path and command fields
+      await updateMachineCertificate(props.machineId, props.editItem.id, {
+        cert_path: formModel.cert_path,
+        private_key_path: formModel.private_key_path,
+        post_deploy_commands: formModel.post_deploy_commands || undefined,
+      });
+      message.success('部署配置更新成功');
+    } else {
+      // Create mode
+      await createMachineCertificate(props.machineId, {
+        certificate_id: formModel.certificate_id!,
+        cert_path: formModel.cert_path,
+        private_key_path: formModel.private_key_path,
+        post_deploy_commands: formModel.post_deploy_commands || undefined,
+      });
+      message.success('部署配置创建成功');
+    }
     emit('success');
     emit('update:show', false);
   });
@@ -105,7 +137,7 @@ function handleClose() {
     @update:show="emit('update:show', $event)"
   >
     <NCard
-      title="新增部署配置"
+      :title="dialogTitle"
       style="width: 560px; max-width: 90vw"
       :bordered="false"
       role="dialog"
@@ -124,6 +156,7 @@ function handleClose() {
             v-model:value="formModel.certificate_id"
             :options="certOptions"
             :loading="certLoading"
+            :disabled="isEditMode"
             placeholder="请选择要部署的证书"
             filterable
           />
@@ -147,7 +180,9 @@ function handleClose() {
       <template #footer>
         <NSpace justify="end">
           <NButton :disabled="submitting" @click="handleClose">取消</NButton>
-          <NButton type="primary" :loading="submitting" @click="onSubmit">创建</NButton>
+          <NButton type="primary" :loading="submitting" @click="onSubmit">
+            {{ isEditMode ? '保存' : '创建' }}
+          </NButton>
         </NSpace>
       </template>
     </NCard>

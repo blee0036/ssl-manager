@@ -60,6 +60,11 @@ const domain = {
   linked_certificate_id: 'cert1',
   linked_machine_certificate_id: 'mc1',
   monitor_enabled: true,
+  alert_ignored: false,
+  dns_record_id: '',
+  dns_record_type: '',
+  dns_record_value: '',
+  thirdpart_dns_id: '',
   created_at: now,
   updated_at: now,
   latest_monitor_result: {
@@ -207,10 +212,22 @@ async function mockApi(page: Page) {
     if (path === '/api/machines/m1/certificates/mc1/deployment-logs') {
       return json(['2026-06-04 12:00:00 deploy started', '2026-06-04 12:00:01 deploy completed']);
     }
-    if (path === '/api/domains') return json([domain]);
+    if (path === '/api/domains') return json({ items: [domain], total: 1, page: 1, per_page: 50 });
     if (path === '/api/thirdpart-dns') return json([thirdpartDns]);
     if (path === '/api/thirdpart-dns/dns1/sync-logs') {
-      return json(['2026-06-04 12:00:00 sync started', '2026-06-04 12:00:01 sync completed']);
+      return json([
+        {
+          id: 'sl1',
+          thirdpart_dns_id: 'dns1',
+          records_count: 5,
+          status: 'success',
+          error_message: '',
+          new_domains: '["new.example.com"]',
+          updated_domains: '["updated.example.com"]',
+          removed_domains: '[]',
+          synced_at: now,
+        },
+      ]);
     }
     if (path === '/api/alerts/channels') return json([alertChannel]);
     if (path === '/api/alerts') return json([alertHistory]);

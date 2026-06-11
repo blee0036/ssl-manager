@@ -63,6 +63,9 @@ const model = ref<Api.SystemConfig>({
     site_key: '',
     secret_key: '',
   },
+  thirdpart_dns: {
+    sync_interval_minutes: 360,
+  },
 });
 
 /** 表单校验规则 */
@@ -86,7 +89,10 @@ async function fetchConfig() {
   try {
     const response = await getSystemConfig();
     const data = adaptResponse<Api.SystemConfig>(response.data);
-    model.value = data;
+    model.value = {
+      ...data,
+      thirdpart_dns: data.thirdpart_dns ?? { sync_interval_minutes: 360 },
+    };
     // 重置敏感字段显示状态
     showViewPassword.value = false;
     showTurnstileSecret.value = false;
@@ -251,6 +257,19 @@ onMounted(() => {
             class="w-full"
           />
         </NFormItem>
+      </NCard>
+
+      <!-- DNS 同步 -->
+      <NCard title="DNS 同步" size="small" class="mb-4">
+        <NFormItem label="DNS 同步间隔（分钟）">
+          <NInputNumber
+            v-model:value="model.thirdpart_dns!.sync_interval_minutes"
+            :min="0"
+            class="w-full"
+            placeholder="360"
+          />
+        </NFormItem>
+        <span class="text-xs text-gray-500">设为 0 禁用定时同步，推荐值 360</span>
       </NCard>
 
       <!-- Turnstile 配置 -->

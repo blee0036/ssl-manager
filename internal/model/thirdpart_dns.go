@@ -22,6 +22,9 @@ type ThirdpartDNSSyncLog struct {
 	RecordsCount   int       `json:"records_count"`
 	Status         string    `json:"status"`
 	ErrorMessage   string    `json:"error_message"`
+	NewDomains     string    `json:"new_domains"`
+	UpdatedDomains string    `json:"updated_domains"`
+	RemovedDomains string    `json:"removed_domains"`
 	SyncedAt       time.Time `json:"synced_at"`
 }
 
@@ -30,4 +33,16 @@ type DNSSyncResult struct {
 	RecordsCount   int      `json:"records_count"`
 	NewDomains     []string `json:"new_domains"`
 	UpdatedDomains []string `json:"updated_domains"`
+	RemovedDomains []string `json:"removed_domains"`
+}
+
+// NewDNSSyncResult creates a new DNSSyncResult with slices initialized to empty arrays.
+// All code paths constructing DNSSyncResult must use this function to ensure JSON outputs [] not null.
+func NewDNSSyncResult(recordsCount int) *DNSSyncResult {
+	return &DNSSyncResult{
+		RecordsCount:   recordsCount,
+		NewDomains:     []string{},
+		UpdatedDomains: []string{},
+		RemovedDomains: []string{},
+	}
 }

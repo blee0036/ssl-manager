@@ -1,8 +1,22 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue';
-import { NDrawer, NDrawerContent } from 'naive-ui';
-import LogViewer from '@/components/LogViewer/index.vue';
-import { getThirdpartDnsSyncLogs } from '@/service/api/thirdpart-dns';
+import {
+  NDrawer,
+  NDrawerContent,
+  NTag,
+  NCollapse,
+  NCollapseItem,
+  NSpace,
+  NSpin,
+  NEmpty,
+  NButton,
+  NIcon,
+  NList,
+  NListItem,
+} from 'naive-ui';
+import { RefreshOutline } from '@vicons/ionicons5';
+import { getThirdpartDnsSyncLogs, type ParsedSyncLog } from '@/service/api/thirdpart-dns';
+import { formatDateTime } from '@/utils/date';
 
 interface Props {
   show: boolean;
@@ -16,7 +30,7 @@ interface Emits {
 const props = defineProps<Props>();
 const emit = defineEmits<Emits>();
 
-const logs = ref<string[]>([]);
+const logs = ref<ParsedSyncLog[]>([]);
 const loading = ref(false);
 
 async function fetchLogs() {
@@ -25,10 +39,15 @@ async function fetchLogs() {
   try {
     logs.value = await getThirdpartDnsSyncLogs(props.dnsItem.id);
   } catch {
-    logs.value = ['获取日志失败'];
+    logs.value = [];
   } finally {
     loading.value = false;
   }
+}
+
+/** 供父组件调用的刷新方法 */
+function refresh() {
+  fetchLogs();
 }
 
 watch(
@@ -42,9 +61,7 @@ watch(
   }
 );
 
-function handleRefresh() {
-  fetchLogs();
-}
+defineExpose({ refresh });
 </script>
 
 <template>
@@ -58,12 +75,174 @@ function handleRefresh() {
       :title="`同步日志 - ${dnsItem?.name ?? ''}`"
       closable
     >
-      <LogViewer
-        :logs="logs"
-        :loading="loading"
-        max-height="calc(100vh - 120px)"
-        @refresh="handleRefresh"
-      />
+      <!-- Toolbar -->
+      <div class="sync-log-toolbar">
+        <NButton size="small" quaternary :loading="loading" @click="refresh">
+          <template #icon>
+            <NIcon><RefreshOutline /></NIcon>
+          </template>
+          刷新
+        </NButton>
+      </div>
+
+      <!-- Loading -->
+      <div v-if="loading && logs.length === 0" class="sync-log-loading">
+        <NSpin size="medium" />
+      </div>
+
+      <!-- Empty -->
+      <NEmpty v-else-if="!loading && logs.length === 0" description="暂无同步日志" />
+
+      <!-- Log entries -->
+      <div v-else class="sync-log-list">
+        <div v-for="log in logs" :key="log.id" class="sync-log-entry">
+          <!-- Header line: time + status -->
+          <div class="sync-log-header">
+            <span class="sync-log-time">{{ formatDateTime(log.synced_at) }}</span>
+            <NTag
+              :type="log.status === 'success' ? 'success' : 'error'"
+              size="small"
+              round
+            >
+              {{ log.status === 'success' ? '成功' : '失败' }}
+            </NTag>
+          </div>
+
+          <!-- Summary: record count + domain change tags -->
+          <NSpace class="sync-log-summary" size="small" :wrap="true">
+            <NTag size="small" :bordered="false">
+              记录数: {{ log.records_count }}
+            </NTag>
+            <NTag
+              v-if="log.new_domains.length > 0"
+              size="small"
+              type="success"
+              :bordered="false"
+            >
+              新增 {{ log.new_domains.length }}
+            </NTag>
+            <NTag
+              v-if="log.updated_domains.length > 0"
+              size="small"
+              type="info"
+              :bordered="false"
+            >
+              更新 {{ log.updated_domains.length }}
+            </NTag>
+            <NTag
+              v-if="log.removed_domains.length > 0"
+              size="small"
+              type="warning"
+              :bordered="false"
+            >
+              删除 {{ log.removed_domains.length }}
+            </NTag>
+          </NSpace>
+
+          <!-- Error message -->
+          <div v-if="log.error_message" class="sync-log-error">
+            {{ log.error_message }}
+          </div>
+
+          <!-- Expandable domain lists -->
+          <NCollapse
+            v-if="log.new_domains.length > 0 || log.updated_domains.length > 0 || log.removed_domains.length > 0"
+            class="sync-log-collapse"
+          >
+            <NCollapseItem
+              v-if="log.new_domains.length > 0"
+              :title="`新增域名 (${log.new_domains.length})`"
+              name="new"
+            >
+              <NList bordered size="small">
+                <NListItem v-for="domain in log.new_domains" :key="domain">
+                  {{ domain }}
+                </NListItem>
+              </NList>
+            </NCollapseItem>
+
+            <NCollapseItem
+              v-if="log.updated_domains.length > 0"
+              :title="`更新域名 (${log.updated_domains.length})`"
+              name="updated"
+            >
+              <NList bordered size="small">
+                <NListItem v-for="domain in log.updated_domains" :key="domain">
+                  {{ domain }}
+                </NListItem>
+              </NList>
+            </NCollapseItem>
+
+            <NCollapseItem
+              v-if="log.removed_domains.length > 0"
+              :title="`删除域名 (${log.removed_domains.length})`"
+              name="removed"
+            >
+              <NList bordered size="small">
+                <NListItem v-for="domain in log.removed_domains" :key="domain">
+                  {{ domain }}
+                </NListItem>
+              </NList>
+            </NCollapseItem>
+          </NCollapse>
+        </div>
+      </div>
     </NDrawerContent>
   </NDrawer>
 </template>
+
+<style scoped>
+.sync-log-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+}
+
+.sync-log-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+.sync-log-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.sync-log-entry {
+  padding: 12px;
+  border: 1px solid var(--n-border-color, #e0e0e6);
+  border-radius: 6px;
+}
+
+.sync-log-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.sync-log-time {
+  font-size: 13px;
+  color: var(--n-text-color-3, #999);
+}
+
+.sync-log-summary {
+  margin-bottom: 8px;
+}
+
+.sync-log-error {
+  font-size: 12px;
+  color: #d03050;
+  margin-bottom: 8px;
+  padding: 4px 8px;
+  background: rgba(208, 48, 80, 0.06);
+  border-radius: 4px;
+}
+
+.sync-log-collapse {
+  margin-top: 4px;
+}
+</style>

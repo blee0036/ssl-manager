@@ -77,6 +77,9 @@ func setupThirdpartDNSServiceTestDB(t *testing.T) *sql.DB {
 		records_count INTEGER NOT NULL DEFAULT 0,
 		status TEXT NOT NULL CHECK(status IN ('success', 'failed')),
 		error_message TEXT DEFAULT '',
+		new_domains TEXT DEFAULT '[]',
+		updated_domains TEXT DEFAULT '[]',
+		removed_domains TEXT DEFAULT '[]',
 		synced_at TEXT NOT NULL
 	)`)
 	if err != nil {
@@ -89,6 +92,7 @@ func setupThirdpartDNSServiceTestDB(t *testing.T) *sql.DB {
 		name TEXT NOT NULL,
 		source TEXT DEFAULT 'manual' CHECK(source IN ('manual', 'certificate', 'cloudflare')),
 		thirdpart_dns_id TEXT DEFAULT '',
+		dns_record_id TEXT DEFAULT '',
 		dns_record_type TEXT DEFAULT '',
 		dns_record_value TEXT DEFAULT '',
 		monitor_port INTEGER NOT NULL DEFAULT 443,
@@ -96,6 +100,7 @@ func setupThirdpartDNSServiceTestDB(t *testing.T) *sql.DB {
 		linked_certificate_id TEXT,
 		linked_machine_certificate_id TEXT,
 		monitor_enabled INTEGER NOT NULL DEFAULT 1,
+		alert_ignored INTEGER NOT NULL DEFAULT 0,
 		created_at TEXT NOT NULL,
 		updated_at TEXT NOT NULL
 	)`)
@@ -341,11 +346,11 @@ func TestThirdpartDNSService_SyncRecords_FullSync(t *testing.T) {
 		},
 		records: map[string][]DNSRecord{
 			"zone-1": {
-				{Name: "www.example.com", Type: "A", Value: "1.2.3.4"},
-				{Name: "api.example.com", Type: "CNAME", Value: "lb.example.com"},
+				{ID: "rec-1", Name: "www.example.com", Type: "A", Value: "1.2.3.4"},
+				{ID: "rec-2", Name: "api.example.com", Type: "CNAME", Value: "lb.example.com"},
 			},
 			"zone-2": {
-				{Name: "app.test.com", Type: "A", Value: "5.6.7.8"},
+				{ID: "rec-3", Name: "app.test.com", Type: "A", Value: "5.6.7.8"},
 			},
 		},
 	}
@@ -414,11 +419,11 @@ func TestThirdpartDNSService_SyncRecords_FilteredByMainDomains(t *testing.T) {
 		},
 		records: map[string][]DNSRecord{
 			"zone-1": {
-				{Name: "www.example.com", Type: "A", Value: "1.2.3.4"},
-				{Name: "api.example.com", Type: "AAAA", Value: "::1"},
+				{ID: "rec-4", Name: "www.example.com", Type: "A", Value: "1.2.3.4"},
+				{ID: "rec-5", Name: "api.example.com", Type: "AAAA", Value: "::1"},
 			},
 			"zone-2": {
-				{Name: "app.other.com", Type: "A", Value: "5.6.7.8"},
+				{ID: "rec-6", Name: "app.other.com", Type: "A", Value: "5.6.7.8"},
 			},
 		},
 	}
@@ -471,7 +476,7 @@ func TestThirdpartDNSService_SyncRecords_UpdatesExisting(t *testing.T) {
 		},
 		records: map[string][]DNSRecord{
 			"zone-1": {
-				{Name: "www.example.com", Type: "A", Value: "9.9.9.9"},
+				{ID: "rec-7", Name: "www.example.com", Type: "A", Value: "9.9.9.9"},
 			},
 		},
 	}
@@ -501,7 +506,7 @@ func TestThirdpartDNSService_SyncRecords_UpdatesExisting(t *testing.T) {
 
 	// Change the record value
 	cfClient.records["zone-1"] = []DNSRecord{
-		{Name: "www.example.com", Type: "A", Value: "10.10.10.10"},
+		{ID: "rec-7", Name: "www.example.com", Type: "A", Value: "10.10.10.10"},
 	}
 
 	// Second sync - should update the existing domain
@@ -627,7 +632,7 @@ func TestThirdpartDNSService_SyncRecords_DomainSourceIsCloudflare(t *testing.T) 
 		},
 		records: map[string][]DNSRecord{
 			"zone-1": {
-				{Name: "www.example.com", Type: "A", Value: "1.2.3.4"},
+				{ID: "rec-8", Name: "www.example.com", Type: "A", Value: "1.2.3.4"},
 			},
 		},
 	}
@@ -675,7 +680,7 @@ func TestThirdpartDNSService_GetSyncLogs(t *testing.T) {
 	domainRepo := repository.NewDomainRepository(db)
 	cfClient := &mockCloudflareClient{
 		zones:   []Zone{{ID: "zone-1", Name: "example.com"}},
-		records: map[string][]DNSRecord{"zone-1": {{Name: "www.example.com", Type: "A", Value: "1.2.3.4"}}},
+		records: map[string][]DNSRecord{"zone-1": {{ID: "rec-9", Name: "www.example.com", Type: "A", Value: "1.2.3.4"}}},
 	}
 	svc := NewThirdpartDNSService(dnsRepo, domainRepo, cfClient, nil, testRuntimeCfg())
 
