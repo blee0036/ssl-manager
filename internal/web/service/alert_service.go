@@ -138,8 +138,8 @@ func (s *AlertService) GetByID(ctx context.Context, id string) (*model.Alert, er
 	return s.alertRepo.GetByID(ctx, id)
 }
 
-// GetHistory returns alert history with optional filtering.
-func (s *AlertService) GetHistory(ctx context.Context, filter model.AlertFilter) ([]*model.Alert, error) {
+// GetHistory returns alert history with optional filtering and pagination.
+func (s *AlertService) GetHistory(ctx context.Context, filter model.AlertFilter) ([]*model.Alert, int, error) {
 	return s.alertRepo.List(ctx, filter)
 }
 

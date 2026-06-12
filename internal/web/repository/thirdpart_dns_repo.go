@@ -206,17 +206,37 @@ func (r *ThirdpartDNSRepository) SaveSyncLog(ctx context.Context, log *model.Thi
 	return nil
 }
 
-// GetSyncLogs retrieves sync logs for a thirdpart_dns configuration, ordered by time descending.
-func (r *ThirdpartDNSRepository) GetSyncLogs(ctx context.Context, thirdpartDNSID string) ([]*model.ThirdpartDNSSyncLog, error) {
+// GetSyncLogs retrieves sync logs for a thirdpart_dns configuration with pagination, ordered by time descending.
+func (r *ThirdpartDNSRepository) GetSyncLogs(ctx context.Context, thirdpartDNSID string, page, perPage int) ([]*model.ThirdpartDNSSyncLog, int, error) {
+	// Pagination defaults
+	if perPage <= 0 {
+		perPage = 50
+	}
+	if perPage > 100 {
+		perPage = 100
+	}
+	if page <= 0 {
+		page = 1
+	}
+	offset := (page - 1) * perPage
+
+	// Count total
+	var total int
+	countQuery := `SELECT COUNT(*) FROM thirdpart_dns_sync_logs WHERE thirdpart_dns_id = ?`
+	if err := r.db.QueryRowContext(ctx, countQuery, thirdpartDNSID).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("failed to count sync logs: %w", err)
+	}
+
 	query := `SELECT id, thirdpart_dns_id, records_count, status, error_message,
 	COALESCE(new_domains, '[]'), COALESCE(updated_domains, '[]'), COALESCE(removed_domains, '[]'),
 	synced_at
 	FROM thirdpart_dns_sync_logs WHERE thirdpart_dns_id = ?
-	ORDER BY synced_at DESC`
+	ORDER BY synced_at DESC
+	LIMIT ? OFFSET ?`
 
-	rows, err := r.db.QueryContext(ctx, query, thirdpartDNSID)
+	rows, err := r.db.QueryContext(ctx, query, thirdpartDNSID, perPage, offset)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query sync logs: %w", err)
+		return nil, 0, fmt.Errorf("failed to query sync logs: %w", err)
 	}
 	defer rows.Close()
 
@@ -224,16 +244,16 @@ func (r *ThirdpartDNSRepository) GetSyncLogs(ctx context.Context, thirdpartDNSID
 	for rows.Next() {
 		l, err := r.scanSyncLogFromRows(rows)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		logs = append(logs, l)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating sync log rows: %w", err)
+		return nil, 0, fmt.Errorf("error iterating sync log rows: %w", err)
 	}
 
-	return logs, nil
+	return logs, total, nil
 }
 
 // scanConfig scans a single row into a ThirdpartDNS model.

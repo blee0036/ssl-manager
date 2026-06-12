@@ -66,8 +66,8 @@ func (r *AlertRepository) GetByID(ctx context.Context, id string) (*model.Alert,
 }
 
 // List returns alerts with optional filtering, ordered by created_at DESC.
-func (r *AlertRepository) List(ctx context.Context, filter model.AlertFilter) ([]*model.Alert, error) {
-	query := `SELECT id, level, type, title, content, status, target_type, target_id, sent_channels, created_at, resolved_at FROM alerts`
+func (r *AlertRepository) List(ctx context.Context, filter model.AlertFilter) ([]*model.Alert, int, error) {
+	whereClause := ""
 	var conditions []string
 	var args []interface{}
 
@@ -85,13 +85,36 @@ func (r *AlertRepository) List(ctx context.Context, filter model.AlertFilter) ([
 	}
 
 	if len(conditions) > 0 {
-		query += " WHERE " + strings.Join(conditions, " AND ")
+		whereClause = " WHERE " + strings.Join(conditions, " AND ")
 	}
-	query += " ORDER BY created_at DESC"
 
-	rows, err := r.db.QueryContext(ctx, query, args...)
+	// Count total
+	var total int
+	countQuery := "SELECT COUNT(*) FROM alerts" + whereClause
+	if err := r.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("failed to count alerts: %w", err)
+	}
+
+	// Pagination defaults
+	perPage := filter.PerPage
+	if perPage <= 0 {
+		perPage = 50
+	}
+	if perPage > 200 {
+		perPage = 200
+	}
+	page := filter.Page
+	if page <= 0 {
+		page = 1
+	}
+	offset := (page - 1) * perPage
+
+	query := `SELECT id, level, type, title, content, status, target_type, target_id, sent_channels, created_at, resolved_at FROM alerts` + whereClause + " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+	dataArgs := append(args, perPage, offset)
+
+	rows, err := r.db.QueryContext(ctx, query, dataArgs...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query alerts: %w", err)
+		return nil, 0, fmt.Errorf("failed to query alerts: %w", err)
 	}
 	defer rows.Close()
 
@@ -99,14 +122,14 @@ func (r *AlertRepository) List(ctx context.Context, filter model.AlertFilter) ([
 	for rows.Next() {
 		alert, err := r.scanAlertFromRows(rows)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		alerts = append(alerts, alert)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate alerts: %w", err)
+		return nil, 0, fmt.Errorf("failed to iterate alerts: %w", err)
 	}
-	return alerts, nil
+	return alerts, total, nil
 }
 
 // FindActiveByTarget finds an active (unresolved) alert for a specific target and alert type.

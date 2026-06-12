@@ -259,7 +259,7 @@ func TestThirdpartDNSRepository_Delete(t *testing.T) {
 	}
 
 	// Verify sync logs are gone
-	logs, err := repo.GetSyncLogs(ctx, config.ID)
+	logs, _, err := repo.GetSyncLogs(ctx, config.ID, 1, 50)
 	if err != nil {
 		t.Fatalf("GetSyncLogs failed: %v", err)
 	}
@@ -317,7 +317,7 @@ func TestThirdpartDNSRepository_SaveSyncLog(t *testing.T) {
 	}
 
 	// Verify reading back
-	logs, err := repo.GetSyncLogs(ctx, config.ID)
+	logs, _, err := repo.GetSyncLogs(ctx, config.ID, 1, 50)
 	if err != nil {
 		t.Fatalf("GetSyncLogs failed: %v", err)
 	}
@@ -385,7 +385,7 @@ func TestThirdpartDNSRepository_GetSyncLogs(t *testing.T) {
 		t.Fatalf("SaveSyncLog failed: %v", err)
 	}
 
-	logs, err := repo.GetSyncLogs(ctx, config.ID)
+	logs, _, err := repo.GetSyncLogs(ctx, config.ID, 1, 50)
 	if err != nil {
 		t.Fatalf("GetSyncLogs failed: %v", err)
 	}
@@ -472,7 +472,7 @@ func TestThirdpartDNSRepository_GetSyncLogs_COALESCEBackwardCompat(t *testing.T)
 	}
 
 	// GetSyncLogs should handle NULL gracefully via COALESCE
-	logs, err := repo.GetSyncLogs(ctx, config.ID)
+	logs, _, err := repo.GetSyncLogs(ctx, config.ID, 1, 50)
 	if err != nil {
 		t.Fatalf("GetSyncLogs failed: %v", err)
 	}

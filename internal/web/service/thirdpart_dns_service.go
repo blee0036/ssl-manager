@@ -255,9 +255,9 @@ func (s *ThirdpartDNSService) SyncRecords(ctx context.Context, configID string) 
 	return result, nil
 }
 
-// GetSyncLogs retrieves sync logs for a configuration.
-func (s *ThirdpartDNSService) GetSyncLogs(ctx context.Context, configID string) ([]*model.ThirdpartDNSSyncLog, error) {
-	return s.dnsRepo.GetSyncLogs(ctx, configID)
+// GetSyncLogs retrieves sync logs for a configuration with pagination.
+func (s *ThirdpartDNSService) GetSyncLogs(ctx context.Context, configID string, page, perPage int) ([]*model.ThirdpartDNSSyncLog, int, error) {
+	return s.dnsRepo.GetSyncLogs(ctx, configID, page, perPage)
 }
 
 // ScanZones lists all Cloudflare zones accessible with the given token.

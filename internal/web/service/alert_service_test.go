@@ -133,7 +133,7 @@ func TestAlertService_Send_Success(t *testing.T) {
 	}
 
 	// Verify alert was saved
-	alerts, err := alertRepo.List(ctx, model.AlertFilter{})
+	alerts, _, err := alertRepo.List(ctx, model.AlertFilter{})
 	if err != nil {
 		t.Fatalf("failed to list alerts: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestAlertService_Send_Suppression(t *testing.T) {
 	}
 
 	// Verify only one alert was saved
-	alerts, err := alertRepo.List(ctx, model.AlertFilter{})
+	alerts, _, err := alertRepo.List(ctx, model.AlertFilter{})
 	if err != nil {
 		t.Fatalf("failed to list alerts: %v", err)
 	}
@@ -231,7 +231,7 @@ func TestAlertService_MarkResolved_SendsRecovery(t *testing.T) {
 	}
 
 	// Get the saved alert
-	alerts, err := alertRepo.List(ctx, model.AlertFilter{})
+	alerts, _, err := alertRepo.List(ctx, model.AlertFilter{})
 	if err != nil {
 		t.Fatalf("failed to list alerts: %v", err)
 	}
@@ -371,7 +371,7 @@ func TestAlertService_MarkResolved_AlreadyResolved(t *testing.T) {
 		t.Fatalf("Send failed: %v", err)
 	}
 
-	alerts, _ := alertRepo.List(ctx, model.AlertFilter{})
+	alerts, _, _ := alertRepo.List(ctx, model.AlertFilter{})
 	alertID := alerts[0].ID
 
 	// Mark resolved first time

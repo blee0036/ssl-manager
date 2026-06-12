@@ -118,7 +118,7 @@ func TestAlertRepository_List_WithFilter(t *testing.T) {
 	}
 
 	// Filter by level
-	result, err := repo.List(ctx, model.AlertFilter{Level: "warning"})
+	result, _, err := repo.List(ctx, model.AlertFilter{Level: "warning"})
 	if err != nil {
 		t.Fatalf("List failed: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestAlertRepository_List_WithFilter(t *testing.T) {
 	}
 
 	// Filter by type
-	result, err = repo.List(ctx, model.AlertFilter{Type: "agent_offline"})
+	result, _, err = repo.List(ctx, model.AlertFilter{Type: "agent_offline"})
 	if err != nil {
 		t.Fatalf("List failed: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestAlertRepository_List_WithFilter(t *testing.T) {
 	}
 
 	// No filter
-	result, err = repo.List(ctx, model.AlertFilter{})
+	result, _, err = repo.List(ctx, model.AlertFilter{})
 	if err != nil {
 		t.Fatalf("List failed: %v", err)
 	}

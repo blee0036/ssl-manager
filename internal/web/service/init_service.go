@@ -141,6 +141,7 @@ type SaveConfigInput struct {
 	DomainMonitor *config.DomainMonitorConfig `json:"domain_monitor,omitempty"`
 	Turnstile     *config.TurnstileConfig     `json:"turnstile,omitempty"`
 	ThirdpartDNS  *config.ThirdpartDNSConfig  `json:"thirdpart_dns,omitempty"`
+	Cleanup       *config.CleanupConfig       `json:"cleanup,omitempty"`
 }
 
 // SaveConfig saves the system configuration to config.json during initialization.
@@ -225,6 +226,15 @@ func (s *InitService) SaveConfig(ctx context.Context, input SaveConfigInput) (*c
 
 	if input.ThirdpartDNS != nil {
 		cfg.ThirdpartDNS.SyncIntervalMinutes = input.ThirdpartDNS.SyncIntervalMinutes
+	}
+
+	if input.Cleanup != nil {
+		if input.Cleanup.RetentionDays >= 0 {
+			cfg.Cleanup.RetentionDays = input.Cleanup.RetentionDays
+		}
+		if input.Cleanup.MinKeepCount > 0 {
+			cfg.Cleanup.MinKeepCount = input.Cleanup.MinKeepCount
+		}
 	}
 
 	// Save config to file

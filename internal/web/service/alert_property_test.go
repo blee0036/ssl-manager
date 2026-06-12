@@ -160,7 +160,7 @@ func TestProperty20_DuplicateAlertSuppression(t *testing.T) {
 			}
 
 			// Only one alert record should exist in the database
-			alerts, err := alertRepo.List(ctx, model.AlertFilter{})
+			alerts, _, err := alertRepo.List(ctx, model.AlertFilter{})
 			if err != nil {
 				t.Logf("Failed to list alerts: %v", err)
 				return false
@@ -229,7 +229,7 @@ func TestProperty20_DuplicateAlertSuppression(t *testing.T) {
 			}
 
 			// Get the saved alert and resolve it
-			alerts, err := alertRepo.List(ctx, model.AlertFilter{})
+			alerts, _, err := alertRepo.List(ctx, model.AlertFilter{})
 			if err != nil {
 				t.Logf("Failed to list alerts: %v", err)
 				return false

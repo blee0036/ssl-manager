@@ -54,6 +54,10 @@ const model = ref<Api.SystemConfig>({
   thirdpart_dns: {
     sync_interval_minutes: 360,
   },
+  cleanup: {
+    retention_days: 7,
+    min_keep_count: 1000,
+  },
 });
 
 const rules: FormRules = {

@@ -215,7 +215,7 @@ async function mockApi(page: Page) {
     if (path === '/api/domains') return json({ items: [domain], total: 1, page: 1, per_page: 50 });
     if (path === '/api/thirdpart-dns') return json([thirdpartDns]);
     if (path === '/api/thirdpart-dns/dns1/sync-logs') {
-      return json([
+      return json({ items: [
         {
           id: 'sl1',
           thirdpart_dns_id: 'dns1',
@@ -227,10 +227,10 @@ async function mockApi(page: Page) {
           removed_domains: '[]',
           synced_at: now,
         },
-      ]);
+      ], total: 1, page: 1, per_page: 50 });
     }
     if (path === '/api/alerts/channels') return json([alertChannel]);
-    if (path === '/api/alerts') return json([alertHistory]);
+    if (path === '/api/alerts') return json({ items: [alertHistory], total: 1, page: 1, per_page: 50 });
     if (path === '/api/audit-logs') {
       return json([
         {

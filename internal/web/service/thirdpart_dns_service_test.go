@@ -392,7 +392,7 @@ func TestThirdpartDNSService_SyncRecords_FullSync(t *testing.T) {
 	}
 
 	// Verify sync log was created
-	logs, err := svc.GetSyncLogs(ctx, config.ID)
+	logs, _, err := svc.GetSyncLogs(ctx, config.ID, 1, 50)
 	if err != nil {
 		t.Fatalf("GetSyncLogs failed: %v", err)
 	}
@@ -598,7 +598,7 @@ func TestThirdpartDNSService_SyncRecords_APIFailure(t *testing.T) {
 	}
 
 	// Verify failure sync log was created
-	logs, err := svc.GetSyncLogs(ctx, config.ID)
+	logs, _, err := svc.GetSyncLogs(ctx, config.ID, 1, 50)
 	if err != nil {
 		t.Fatalf("GetSyncLogs failed: %v", err)
 	}
@@ -705,7 +705,7 @@ func TestThirdpartDNSService_GetSyncLogs(t *testing.T) {
 		t.Fatalf("Second SyncRecords failed: %v", err)
 	}
 
-	logs, err := svc.GetSyncLogs(ctx, config.ID)
+	logs, _, err := svc.GetSyncLogs(ctx, config.ID, 1, 50)
 	if err != nil {
 		t.Fatalf("GetSyncLogs failed: %v", err)
 	}

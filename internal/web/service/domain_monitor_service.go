@@ -191,6 +191,11 @@ func (s *DomainMonitorService) GetLatestMonitorResult(ctx context.Context, domai
 	return s.domainRepo.GetLatestMonitorResult(ctx, domainID)
 }
 
+// GetLatestMonitorResultsBatch retrieves the latest monitor results for multiple domains in one query.
+func (s *DomainMonitorService) GetLatestMonitorResultsBatch(ctx context.Context, domainIDs []string) (map[string]*model.DomainMonitorResult, error) {
+	return s.domainRepo.GetLatestMonitorResultsBatch(ctx, domainIDs)
+}
+
 // Probe performs a TLS handshake probe for a specific domain.
 func (s *DomainMonitorService) Probe(ctx context.Context, domainID string) (*model.DomainMonitorResult, error) {
 	domain, err := s.domainRepo.GetByID(ctx, domainID)

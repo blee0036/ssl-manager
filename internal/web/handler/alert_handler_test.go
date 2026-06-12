@@ -148,12 +148,16 @@ func TestAlertHandler_ListAlerts_Empty(t *testing.T) {
 		t.Fatalf("failed to unmarshal response: %v", err)
 	}
 
-	data, ok := resp.Data.([]interface{})
+	dataMap, ok := resp.Data.(map[string]interface{})
 	if !ok {
-		t.Fatalf("expected data to be an array, got %T", resp.Data)
+		t.Fatalf("expected data to be a map, got %T", resp.Data)
 	}
-	if len(data) != 0 {
-		t.Errorf("expected empty array, got %d items", len(data))
+	items, ok := dataMap["items"].([]interface{})
+	if !ok {
+		t.Fatalf("expected items to be an array, got %T", dataMap["items"])
+	}
+	if len(items) != 0 {
+		t.Errorf("expected empty array, got %d items", len(items))
 	}
 }
 
@@ -176,12 +180,16 @@ func TestAlertHandler_ListAlerts_WithAlerts(t *testing.T) {
 		t.Fatalf("failed to unmarshal response: %v", err)
 	}
 
-	data, ok := resp.Data.([]interface{})
+	dataMap, ok := resp.Data.(map[string]interface{})
 	if !ok {
-		t.Fatalf("expected data to be an array, got %T", resp.Data)
+		t.Fatalf("expected data to be a map, got %T", resp.Data)
 	}
-	if len(data) != 2 {
-		t.Errorf("expected 2 items, got %d", len(data))
+	items, ok := dataMap["items"].([]interface{})
+	if !ok {
+		t.Fatalf("expected items to be an array, got %T", dataMap["items"])
+	}
+	if len(items) != 2 {
+		t.Errorf("expected 2 items, got %d", len(items))
 	}
 }
 
@@ -205,12 +213,16 @@ func TestAlertHandler_ListAlerts_WithFilter(t *testing.T) {
 		t.Fatalf("failed to unmarshal response: %v", err)
 	}
 
-	data, ok := resp.Data.([]interface{})
+	dataMap, ok := resp.Data.(map[string]interface{})
 	if !ok {
-		t.Fatalf("expected data to be an array, got %T", resp.Data)
+		t.Fatalf("expected data to be a map, got %T", resp.Data)
 	}
-	if len(data) != 1 {
-		t.Errorf("expected 1 item (only active), got %d", len(data))
+	items, ok := dataMap["items"].([]interface{})
+	if !ok {
+		t.Fatalf("expected items to be an array, got %T", dataMap["items"])
+	}
+	if len(items) != 1 {
+		t.Errorf("expected 1 item (only active), got %d", len(items))
 	}
 }
 
@@ -233,12 +245,16 @@ func TestAlertHandler_ListAlerts_FilterByLevel(t *testing.T) {
 		t.Fatalf("failed to unmarshal response: %v", err)
 	}
 
-	data, ok := resp.Data.([]interface{})
+	dataMap, ok := resp.Data.(map[string]interface{})
 	if !ok {
-		t.Fatalf("expected data to be an array, got %T", resp.Data)
+		t.Fatalf("expected data to be a map, got %T", resp.Data)
 	}
-	if len(data) != 1 {
-		t.Errorf("expected 1 item (only critical), got %d", len(data))
+	items, ok := dataMap["items"].([]interface{})
+	if !ok {
+		t.Fatalf("expected items to be an array, got %T", dataMap["items"])
+	}
+	if len(items) != 1 {
+		t.Errorf("expected 1 item (only critical), got %d", len(items))
 	}
 }
 

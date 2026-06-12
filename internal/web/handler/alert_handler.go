@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -47,15 +48,17 @@ func (h *AlertHandler) RegisterRoutes(r chi.Router, authService middleware.AuthS
 	})
 }
 
-// ListAlerts handles GET /api/alerts - list alert history with optional filters.
+// ListAlerts handles GET /api/alerts - list alert history with optional filters and pagination.
 func (h *AlertHandler) ListAlerts(w http.ResponseWriter, r *http.Request) {
 	filter := model.AlertFilter{
 		Level:  r.URL.Query().Get("level"),
 		Type:   r.URL.Query().Get("type"),
 		Status: r.URL.Query().Get("status"),
 	}
+	filter.Page = parseAlertIntParam(r, "page", 1)
+	filter.PerPage = parseAlertIntParam(r, "per_page", 50)
 
-	alerts, err := h.alertService.GetHistory(r.Context(), filter)
+	alerts, total, err := h.alertService.GetHistory(r.Context(), filter)
 	if err != nil {
 		writeErrorResponse(w, http.StatusInternalServerError, "failed to list alerts", err.Error())
 		return
@@ -65,7 +68,19 @@ func (h *AlertHandler) ListAlerts(w http.ResponseWriter, r *http.Request) {
 		alerts = []*model.Alert{}
 	}
 
-	writeSuccessResponse(w, http.StatusOK, "success", alerts)
+	type PaginatedAlerts struct {
+		Items   []*model.Alert `json:"items"`
+		Total   int            `json:"total"`
+		Page    int            `json:"page"`
+		PerPage int            `json:"per_page"`
+	}
+
+	writeSuccessResponse(w, http.StatusOK, "success", PaginatedAlerts{
+		Items:   alerts,
+		Total:   total,
+		Page:    filter.Page,
+		PerPage: filter.PerPage,
+	})
 }
 
 // GetAlert handles GET /api/alerts/{id} - get alert details.
@@ -334,4 +349,17 @@ func maskString(s string) string {
 		return strings.Repeat("*", len(s))
 	}
 	return s[:4] + strings.Repeat("*", len(s)-8) + s[len(s)-4:]
+}
+
+// parseAlertIntParam parses a query parameter as int with default fallback.
+func parseAlertIntParam(r *http.Request, key string, defaultVal int) int {
+	raw := r.URL.Query().Get(key)
+	if raw == "" {
+		return defaultVal
+	}
+	val, err := strconv.Atoi(raw)
+	if err != nil || val < 1 {
+		return defaultVal
+	}
+	return val
 }

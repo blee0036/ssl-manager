@@ -289,6 +289,110 @@ func (r *DomainRepository) GetLatestMonitorResult(ctx context.Context, domainID 
 	return r.scanMonitorResult(row)
 }
 
+// GetLatestMonitorResultsBatch retrieves the latest monitor result for each of the given domain IDs
+// in a single query. Returns a map of domainID → *DomainMonitorResult (only for domains that have results).
+func (r *DomainRepository) GetLatestMonitorResultsBatch(ctx context.Context, domainIDs []string) (map[string]*model.DomainMonitorResult, error) {
+	if len(domainIDs) == 0 {
+		return map[string]*model.DomainMonitorResult{}, nil
+	}
+
+	// Build placeholders for IN clause
+	placeholders := make([]string, len(domainIDs))
+	args := make([]interface{}, len(domainIDs))
+	for i, id := range domainIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+
+	// Use a correlated subquery to get only the latest result per domain
+	query := fmt.Sprintf(`SELECT dmr.id, dmr.domain_id, dmr.checked_port, dmr.resolved_ips, dmr.tls_success,
+		dmr.certificate_fingerprint_sha256, dmr.issuer, dmr.expire_at, dmr.days_remaining,
+		dmr.domain_matched, dmr.chain_valid, dmr.error_message, dmr.checked_at
+	FROM domain_monitor_results dmr
+	WHERE dmr.domain_id IN (%s)
+	  AND dmr.id = (SELECT id FROM domain_monitor_results WHERE domain_id = dmr.domain_id ORDER BY checked_at DESC LIMIT 1)`,
+		strings.Join(placeholders, ","))
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to batch query monitor results: %w", err)
+	}
+	defer rows.Close()
+
+	results := make(map[string]*model.DomainMonitorResult, len(domainIDs))
+	for rows.Next() {
+		result, err := r.scanMonitorResultFromRows(rows)
+		if err != nil {
+			return nil, err
+		}
+		results[result.DomainID] = result
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating monitor result rows: %w", err)
+	}
+
+	return results, nil
+}
+
+// scanMonitorResultFromRows scans a row from sql.Rows into a DomainMonitorResult model.
+func (r *DomainRepository) scanMonitorResultFromRows(rows *sql.Rows) (*model.DomainMonitorResult, error) {
+	var result model.DomainMonitorResult
+	var resolvedIPsJSON string
+	var checkedAt string
+	var expireAt sql.NullString
+	var daysRemaining sql.NullInt64
+	var tlsSuccess, domainMatched, chainValid int
+
+	err := rows.Scan(
+		&result.ID,
+		&result.DomainID,
+		&result.CheckedPort,
+		&resolvedIPsJSON,
+		&tlsSuccess,
+		&result.CertificateFingerprintSHA256,
+		&result.Issuer,
+		&expireAt,
+		&daysRemaining,
+		&domainMatched,
+		&chainValid,
+		&result.ErrorMessage,
+		&checkedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to scan monitor result row: %w", err)
+	}
+
+	if resolvedIPsJSON != "" {
+		if err := json.Unmarshal([]byte(resolvedIPsJSON), &result.ResolvedIPs); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal resolved_ips: %w", err)
+		}
+	}
+
+	result.CheckedAt, err = time.Parse(time.RFC3339, checkedAt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse checked_at: %w", err)
+	}
+
+	if expireAt.Valid {
+		t, err := time.Parse(time.RFC3339, expireAt.String)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse expire_at: %w", err)
+		}
+		result.ExpireAt = &t
+	}
+
+	if daysRemaining.Valid {
+		d := int(daysRemaining.Int64)
+		result.DaysRemaining = &d
+	}
+
+	result.TLSSuccess = tlsSuccess == 1
+	result.DomainMatched = domainMatched == 1
+	result.ChainValid = chainValid == 1
+
+	return &result, nil
+}
+
 // scanDomain scans a single row into a Domain model.
 func (r *DomainRepository) scanDomain(row *sql.Row) (*model.Domain, error) {
 	var domain model.Domain

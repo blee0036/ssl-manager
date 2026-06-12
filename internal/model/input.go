@@ -169,7 +169,9 @@ type UpdateThirdpartDNSInput struct {
 
 // AlertFilter 告警过滤条件
 type AlertFilter struct {
-	Level  string `json:"level,omitempty"`
-	Type   string `json:"type,omitempty"`
-	Status string `json:"status,omitempty"`
+	Level   string `json:"level,omitempty"`
+	Type    string `json:"type,omitempty"`
+	Status  string `json:"status,omitempty"`
+	Page    int    `json:"page,omitempty"`
+	PerPage int    `json:"per_page,omitempty"`
 }

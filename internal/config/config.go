@@ -23,6 +23,7 @@ type Config struct {
 	DomainMonitor DomainMonitorConfig `json:"domain_monitor"`
 	Turnstile     TurnstileConfig     `json:"turnstile"`
 	ThirdpartDNS  ThirdpartDNSConfig  `json:"thirdpart_dns"`
+	Cleanup       CleanupConfig       `json:"cleanup"`
 }
 
 // ServerConfig holds settings for the Web Backend server.
@@ -73,6 +74,12 @@ type ThirdpartDNSConfig struct {
 	SyncIntervalMinutes int `json:"sync_interval_minutes"` // 定时同步间隔分钟数，默认 360；<=0 禁用定时同步
 }
 
+// CleanupConfig holds settings for periodic data cleanup.
+type CleanupConfig struct {
+	RetentionDays int `json:"retention_days"` // 保留天数，超过此天数的旧记录会被清理，默认 7；<=0 禁用清理
+	MinKeepCount  int `json:"min_keep_count"` // 每个表最少保留的记录数，默认 1000
+}
+
 // DefaultConfig returns a Config with sensible default values.
 func DefaultConfig() *Config {
 	return &Config{
@@ -107,6 +114,10 @@ func DefaultConfig() *Config {
 		},
 		ThirdpartDNS: ThirdpartDNSConfig{
 			SyncIntervalMinutes: 360,
+		},
+		Cleanup: CleanupConfig{
+			RetentionDays: 7,
+			MinKeepCount:  1000,
 		},
 	}
 }

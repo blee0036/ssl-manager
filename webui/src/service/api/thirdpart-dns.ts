@@ -103,12 +103,20 @@ export interface ParsedSyncLog {
   synced_at: string;
 }
 
-/** 获取同步日志（解析 new_domains/updated_domains/removed_domains JSON 字符串） */
-export async function getThirdpartDnsSyncLogs(id: string): Promise<ParsedSyncLog[]> {
-  const res = await request.get<Api.Response<Api.ThirdpartDnsSyncLog[]>>(`/api/thirdpart-dns/${id}/sync-logs`);
-  const data = adaptResponse<Api.ThirdpartDnsSyncLog[]>(res.data);
-  const logs = Array.isArray(data) ? data : [];
-  return logs.map((log) => ({
+export interface SyncLogsResult {
+  logs: ParsedSyncLog[];
+  total: number;
+}
+
+/** 获取同步日志（分页，返回 logs + total） */
+export async function getThirdpartDnsSyncLogs(id: string, page = 1, perPage = 50): Promise<SyncLogsResult> {
+  const res = await request.get<Api.Response<{ items: Api.ThirdpartDnsSyncLog[]; total: number; page: number; per_page: number }>>(
+    `/api/thirdpart-dns/${id}/sync-logs`,
+    { params: { page, per_page: perPage } }
+  );
+  const data = adaptResponse<{ items: Api.ThirdpartDnsSyncLog[]; total: number }>(res.data);
+  const items = Array.isArray(data?.items) ? data.items : [];
+  const logs = items.map((log) => ({
     id: log.id,
     thirdpart_dns_id: log.thirdpart_dns_id,
     records_count: log.records_count,
@@ -119,4 +127,5 @@ export async function getThirdpartDnsSyncLogs(id: string): Promise<ParsedSyncLog
     removed_domains: safeParseJsonArray(log.removed_domains),
     synced_at: log.synced_at,
   }));
+  return { logs, total: data?.total ?? logs.length };
 }

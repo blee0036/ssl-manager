@@ -182,6 +182,10 @@ func (s *SchedulerService) run(ctx context.Context, stopCh <-chan struct{}, dnsS
 	if err := s.RunDomainMonitor(ctx); err != nil {
 		log.Printf("[Scheduler] RunDomainMonitor error: %v", err)
 	}
+	// Run cleanup on start (non-critical)
+	if err := s.RunCleanup(ctx); err != nil {
+		log.Printf("[Scheduler] RunCleanup error: %v", err)
+	}
 
 	// Default check interval: every hour for renewals and heartbeat
 	renewalTicker := time.NewTicker(1 * time.Hour)
@@ -226,6 +230,10 @@ func (s *SchedulerService) run(ctx context.Context, stopCh <-chan struct{}, dnsS
 		case <-renewalTicker.C:
 			if err := s.CheckRenewals(ctx); err != nil {
 				log.Printf("[Scheduler] CheckRenewals error: %v", err)
+			}
+			// Periodic cleanup piggybacks on the hourly renewal check
+			if err := s.RunCleanup(ctx); err != nil {
+				log.Printf("[Scheduler] RunCleanup error: %v", err)
 			}
 		case <-heartbeatTicker.C:
 			if err := s.CheckHeartbeatTimeouts(ctx); err != nil {
@@ -334,6 +342,65 @@ func (s *SchedulerService) runDNSSyncAll(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// RunCleanup removes old records from alerts, sync_logs, audit_logs, and domain_monitor_results.
+// Logic: delete records older than RetentionDays, but always keep at least MinKeepCount per table.
+// If RetentionDays <= 0, cleanup is disabled.
+func (s *SchedulerService) RunCleanup(ctx context.Context) error {
+	cfg := s.runtimeCfg.Get().Cleanup
+	if cfg.RetentionDays <= 0 {
+		return nil // cleanup disabled
+	}
+
+	cutoff := time.Now().UTC().Add(-time.Duration(cfg.RetentionDays) * 24 * time.Hour).Format(time.RFC3339)
+	minKeep := cfg.MinKeepCount
+	if minKeep <= 0 {
+		minKeep = 1000
+	}
+
+	// Each table: delete WHERE created_at < cutoff AND id NOT IN (top N newest)
+	tables := []struct {
+		name      string
+		timeCol   string
+		parentCol string // for domain_monitor_results we use domain_id grouping? No, just global retention.
+	}{
+		{name: "alerts", timeCol: "created_at"},
+		{name: "thirdpart_dns_sync_logs", timeCol: "synced_at"},
+		{name: "audit_logs", timeCol: "created_at"},
+		{name: "domain_monitor_results", timeCol: "checked_at"},
+	}
+
+	for _, t := range tables {
+		// Count total records
+		var total int
+		if err := s.db.QueryRowContext(ctx, fmt.Sprintf("SELECT COUNT(*) FROM %s", t.name)).Scan(&total); err != nil {
+			log.Printf("[Cleanup] Failed to count %s: %v", t.name, err)
+			continue
+		}
+
+		// If total <= minKeep, nothing to delete regardless of age
+		if total <= minKeep {
+			continue
+		}
+
+		// Delete old records but preserve at least minKeep newest ones.
+		// Strategy: DELETE WHERE timeCol < cutoff AND id NOT IN (SELECT id ORDER BY timeCol DESC LIMIT minKeep)
+		query := fmt.Sprintf(
+			`DELETE FROM %s WHERE %s < ? AND id NOT IN (SELECT id FROM %s ORDER BY %s DESC LIMIT ?)`,
+			t.name, t.timeCol, t.name, t.timeCol,
+		)
+		result, err := s.db.ExecContext(ctx, query, cutoff, minKeep)
+		if err != nil {
+			log.Printf("[Cleanup] Failed to clean %s: %v", t.name, err)
+			continue
+		}
+		if affected, _ := result.RowsAffected(); affected > 0 {
+			log.Printf("[Cleanup] Deleted %d old records from %s", affected, t.name)
+		}
+	}
+
+	return nil
 }
 
 // CheckRenewals checks all certificates with auto_renew=true and triggers

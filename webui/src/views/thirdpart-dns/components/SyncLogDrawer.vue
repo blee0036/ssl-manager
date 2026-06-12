@@ -30,18 +30,45 @@ interface Emits {
 const props = defineProps<Props>();
 const emit = defineEmits<Emits>();
 
+const PAGE_SIZE = 50;
+
 const logs = ref<ParsedSyncLog[]>([]);
 const loading = ref(false);
+const loadingMore = ref(false);
+const total = ref(0);
+const currentPage = ref(1);
+
+const hasMore = () => logs.value.length < total.value;
 
 async function fetchLogs() {
   if (!props.dnsItem) return;
   loading.value = true;
+  currentPage.value = 1;
   try {
-    logs.value = await getThirdpartDnsSyncLogs(props.dnsItem.id);
+    const result = await getThirdpartDnsSyncLogs(props.dnsItem.id, 1, PAGE_SIZE);
+    logs.value = result.logs;
+    total.value = result.total;
   } catch {
     logs.value = [];
+    total.value = 0;
   } finally {
     loading.value = false;
+  }
+}
+
+async function loadMore() {
+  if (!props.dnsItem || loadingMore.value) return;
+  loadingMore.value = true;
+  const nextPage = currentPage.value + 1;
+  try {
+    const result = await getThirdpartDnsSyncLogs(props.dnsItem.id, nextPage, PAGE_SIZE);
+    logs.value = [...logs.value, ...result.logs];
+    total.value = result.total;
+    currentPage.value = nextPage;
+  } catch {
+    // 加载更多失败时不清空已有数据
+  } finally {
+    loadingMore.value = false;
   }
 }
 
@@ -57,6 +84,8 @@ watch(
       fetchLogs();
     } else {
       logs.value = [];
+      total.value = 0;
+      currentPage.value = 1;
     }
   }
 );
@@ -186,6 +215,17 @@ defineExpose({ refresh });
             </NCollapseItem>
           </NCollapse>
         </div>
+
+        <!-- Load more -->
+        <div v-if="hasMore()" class="sync-log-load-more">
+          <NButton
+            size="small"
+            :loading="loadingMore"
+            @click="loadMore"
+          >
+            加载更多（已显示 {{ logs.length }}/{{ total }}）
+          </NButton>
+        </div>
       </div>
     </NDrawerContent>
   </NDrawer>
@@ -244,5 +284,11 @@ defineExpose({ refresh });
 
 .sync-log-collapse {
   margin-top: 4px;
+}
+
+.sync-log-load-more {
+  display: flex;
+  justify-content: center;
+  padding: 8px 0;
 }
 </style>

@@ -681,12 +681,16 @@ func TestThirdpartDNSHandler_GetSyncLogs_Empty(t *testing.T) {
 		t.Fatalf("failed to unmarshal response: %v", err)
 	}
 
-	data, ok := resp.Data.([]interface{})
+	dataMap, ok := resp.Data.(map[string]interface{})
 	if !ok {
-		t.Fatalf("expected data to be an array, got %T", resp.Data)
+		t.Fatalf("expected data to be a map, got %T", resp.Data)
 	}
-	if len(data) != 0 {
-		t.Errorf("expected empty array, got %d items", len(data))
+	items, ok := dataMap["items"].([]interface{})
+	if !ok {
+		t.Fatalf("expected items to be an array, got %T", dataMap["items"])
+	}
+	if len(items) != 0 {
+		t.Errorf("expected empty array, got %d items", len(items))
 	}
 }
 
@@ -728,9 +732,13 @@ func TestThirdpartDNSHandler_GetSyncLogs_WithLogs(t *testing.T) {
 		t.Fatalf("failed to unmarshal response: %v", err)
 	}
 
-	data, ok := resp.Data.([]interface{})
+	dataMap, ok := resp.Data.(map[string]interface{})
 	if !ok {
-		t.Fatalf("expected data to be an array, got %T", resp.Data)
+		t.Fatalf("expected data to be a map, got %T", resp.Data)
+	}
+	data, ok := dataMap["items"].([]interface{})
+	if !ok {
+		t.Fatalf("expected items to be an array, got %T", dataMap["items"])
 	}
 	if len(data) != 2 {
 		t.Errorf("expected 2 sync logs, got %d", len(data))

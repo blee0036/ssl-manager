@@ -24,6 +24,7 @@ const { canWrite } = usePermission();
 
 const probingIds = reactive(new Set<string>());
 const deletingIds = reactive(new Set<string>());
+const togglingIds = reactive(new Set<string>());
 
 // Controlled sort state for NDataTable (synced with filterState.sort_by/sort_order)
 const tableSortState = ref<DataTableSortState | null>(null);
@@ -186,6 +187,25 @@ async function handleProbe(domain: Api.Domain) {
     message.error(getApiErrorMessage(err, '探测失败'));
   } finally {
     probingIds.delete(domain.id);
+  }
+}
+
+// Toggle monitor_enabled + alert_ignored combined (忽略/启用)
+async function handleToggleIgnore(domain: Api.Domain) {
+  togglingIds.add(domain.id);
+  // "忽略" = monitor_enabled=false + alert_ignored=true
+  // "启用" = monitor_enabled=true + alert_ignored=false
+  const isCurrentlyIgnored = !domain.monitor_enabled && domain.alert_ignored;
+  const newMonitorEnabled = isCurrentlyIgnored ? true : false;
+  const newAlertIgnored = isCurrentlyIgnored ? false : true;
+  try {
+    await updateDomain(domain.id, { monitor_enabled: newMonitorEnabled, alert_ignored: newAlertIgnored });
+    message.success(isCurrentlyIgnored ? `已启用：${domain.name}` : `已忽略：${domain.name}`);
+    refresh();
+  } catch (err: unknown) {
+    message.error(getApiErrorMessage(err, '操作失败'));
+  } finally {
+    togglingIds.delete(domain.id);
   }
 }
 
@@ -378,11 +398,13 @@ function cancelBatchDelete() {
         :batch-operating="batchOperating"
         :probing-ids="probingIds"
         :deleting-ids="deletingIds"
+        :toggling-ids="togglingIds"
         :sort-state="tableSortState"
         @sort-change="onSortChange"
         @edit="handleEditClick"
         @delete="handleDeleteClick"
         @probe="handleProbe"
+        @toggle-ignore="handleToggleIgnore"
         @update:checked-row-keys="checkedRowKeys = $event"
       />
 

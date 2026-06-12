@@ -298,6 +298,10 @@ declare namespace Api {
     thirdpart_dns?: {
       sync_interval_minutes: number;
     };
+    cleanup?: {
+      retention_days: number;
+      min_keep_count: number;
+    };
   }
 
   // === 用户 ===

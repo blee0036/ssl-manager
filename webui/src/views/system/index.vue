@@ -66,6 +66,10 @@ const model = ref<Api.SystemConfig>({
   thirdpart_dns: {
     sync_interval_minutes: 360,
   },
+  cleanup: {
+    retention_days: 7,
+    min_keep_count: 1000,
+  },
 });
 
 /** 表单校验规则 */
@@ -92,6 +96,7 @@ async function fetchConfig() {
     model.value = {
       ...data,
       thirdpart_dns: data.thirdpart_dns ?? { sync_interval_minutes: 360 },
+      cleanup: data.cleanup ?? { retention_days: 7, min_keep_count: 1000 },
     };
     // 重置敏感字段显示状态
     showViewPassword.value = false;
@@ -270,6 +275,28 @@ onMounted(() => {
           />
         </NFormItem>
         <span class="text-xs text-gray-500">设为 0 禁用定时同步，推荐值 360</span>
+      </NCard>
+
+      <!-- 数据清理 -->
+      <NCard title="数据清理" size="small" class="mb-4">
+        <NFormItem label="保留天数">
+          <NInputNumber
+            v-model:value="model.cleanup!.retention_days"
+            :min="0"
+            class="w-full"
+            placeholder="7"
+          />
+        </NFormItem>
+        <span class="text-xs text-gray-500">清理超过指定天数的历史记录（告警、日志、监控结果），设为 0 禁用清理</span>
+        <NFormItem label="最少保留条数" style="margin-top: 12px">
+          <NInputNumber
+            v-model:value="model.cleanup!.min_keep_count"
+            :min="100"
+            class="w-full"
+            placeholder="1000"
+          />
+        </NFormItem>
+        <span class="text-xs text-gray-500">无论多旧，每个表至少保留这么多条记录</span>
       </NCard>
 
       <!-- Turnstile 配置 -->

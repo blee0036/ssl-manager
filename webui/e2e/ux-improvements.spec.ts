@@ -146,7 +146,7 @@ async function mockAdminApi(page: Page) {
       return json({ records_count: 5, new_domains: ['new.example.com'], updated_domains: [], removed_domains: [] });
     }
     if (path === '/api/thirdpart-dns/dns1/sync-logs') {
-      return json([{
+      return json({ items: [{
         id: 'sl1',
         thirdpart_dns_id: 'dns1',
         records_count: 5,
@@ -156,7 +156,7 @@ async function mockAdminApi(page: Page) {
         updated_domains: '[]',
         removed_domains: '[]',
         synced_at: now,
-      }]);
+      }], total: 1, page: 1, per_page: 50 });
     }
 
     if (request.method() !== 'GET') return json({});

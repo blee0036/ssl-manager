@@ -75,16 +75,37 @@ func (h *DomainHandler) List(w http.ResponseWriter, r *http.Request) {
 		domains = []*model.Domain{}
 	}
 
-	// Build response with latest monitor results
+	// Build response with latest monitor results (single batch query instead of N+1)
 	type DomainWithMonitor struct {
 		*model.Domain
 		LatestMonitorResult *model.DomainMonitorResult `json:"latest_monitor_result"`
 	}
 
+	// Collect domain IDs for batch query
+	domainIDs := make([]string, len(domains))
+	for i, d := range domains {
+		domainIDs[i] = d.ID
+	}
+
+	// Single query to get all latest monitor results; fallback to per-item on batch failure
+	monitorResults, batchErr := h.domainService.GetLatestMonitorResultsBatch(r.Context(), domainIDs)
+	if batchErr != nil {
+		// Batch query failed — fallback to individual queries to avoid showing "未检测" for all
+		monitorResults = make(map[string]*model.DomainMonitorResult, len(domainIDs))
+		for _, id := range domainIDs {
+			if result, err := h.domainService.GetLatestMonitorResult(r.Context(), id); err == nil {
+				monitorResults[id] = result
+			}
+		}
+	}
+	if monitorResults == nil {
+		monitorResults = map[string]*model.DomainMonitorResult{}
+	}
+
 	items := make([]DomainWithMonitor, 0, len(domains))
 	for _, d := range domains {
 		dwm := DomainWithMonitor{Domain: d}
-		if result, err := h.domainService.GetLatestMonitorResult(r.Context(), d.ID); err == nil {
+		if result, ok := monitorResults[d.ID]; ok {
 			dwm.LatestMonitorResult = result
 		}
 		items = append(items, dwm)

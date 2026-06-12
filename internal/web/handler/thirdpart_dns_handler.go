@@ -200,7 +200,10 @@ func (h *ThirdpartDNSHandler) GetSyncLogs(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	logs, err := h.dnsService.GetSyncLogs(r.Context(), id)
+	page := parseIntParam(r, "page", 1)
+	perPage := parseIntParam(r, "per_page", 50)
+
+	logs, total, err := h.dnsService.GetSyncLogs(r.Context(), id, page, perPage)
 	if err != nil {
 		writeErrorResponse(w, http.StatusInternalServerError, "failed to get sync logs", err.Error())
 		return
@@ -210,7 +213,19 @@ func (h *ThirdpartDNSHandler) GetSyncLogs(w http.ResponseWriter, r *http.Request
 		logs = []*model.ThirdpartDNSSyncLog{}
 	}
 
-	writeSuccessResponse(w, http.StatusOK, "success", logs)
+	type PaginatedLogs struct {
+		Items   []*model.ThirdpartDNSSyncLog `json:"items"`
+		Total   int                          `json:"total"`
+		Page    int                          `json:"page"`
+		PerPage int                          `json:"per_page"`
+	}
+
+	writeSuccessResponse(w, http.StatusOK, "success", PaginatedLogs{
+		Items:   logs,
+		Total:   total,
+		Page:    page,
+		PerPage: perPage,
+	})
 }
 
 // ScanZones handles POST /api/thirdpart-dns/scan-zones - scan available DNS zones using a token.

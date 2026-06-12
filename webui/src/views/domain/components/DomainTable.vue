@@ -12,12 +12,14 @@ const props = withDefaults(defineProps<{
   batchOperating?: boolean;
   probingIds?: Set<string>;
   deletingIds?: Set<string>;
+  togglingIds?: Set<string>;
   sortState?: DataTableSortState | null;
 }>(), {
   checkedRowKeys: () => [],
   batchOperating: false,
   probingIds: () => new Set<string>(),
   deletingIds: () => new Set<string>(),
+  togglingIds: () => new Set<string>(),
   sortState: null,
 });
 
@@ -25,6 +27,7 @@ const emit = defineEmits<{
   (e: 'delete', domain: Api.Domain): void;
   (e: 'probe', domain: Api.Domain): void;
   (e: 'edit', domain: Api.Domain): void;
+  (e: 'toggle-ignore', domain: Api.Domain): void;
   (e: 'sort-change', sortBy: string, sortOrder: string): void;
   (e: 'update:checkedRowKeys', keys: string[]): void;
 }>();
@@ -177,16 +180,19 @@ const columns = computed<DataTableColumns<Api.Domain>>(() => {
   {
     title: '操作',
     key: 'actions',
-    width: 160,
+    width: 220,
     fixed: 'right',
     render(row) {
       if (!canWrite()) return null;
       const isProbing = props.probingIds.has(row.id);
       const isDeleting = props.deletingIds.has(row.id);
-      const isRowBusy = isProbing || isDeleting;
+      const isToggling = props.togglingIds.has(row.id);
+      const isRowBusy = isProbing || isDeleting || isToggling;
+      // "已忽略" state: monitor disabled AND alert ignored
+      const isIgnored = !row.monitor_enabled && row.alert_ignored;
       return h(
         NSpace,
-        { size: 'small' },
+        { size: 'small', wrap: false },
         {
           default: () => [
             h(
@@ -200,6 +206,18 @@ const columns = computed<DataTableColumns<Api.Domain>>(() => {
                 onClick: () => emit('probe', row),
               },
               { default: () => '探测' }
+            ),
+            h(
+              NButton,
+              {
+                size: 'small',
+                type: isIgnored ? 'success' : 'warning',
+                quaternary: true,
+                loading: isToggling,
+                disabled: props.batchOperating || isRowBusy,
+                onClick: () => emit('toggle-ignore', row),
+              },
+              { default: () => isIgnored ? '启用' : '忽略' }
             ),
             h(
               NButton,

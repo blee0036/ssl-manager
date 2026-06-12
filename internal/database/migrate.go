@@ -31,6 +31,42 @@ func (db *DB) Migrate() error {
 		return fmt.Errorf("migrate removed_domains column: %w", err)
 	}
 
+	// 幂等索引创建：使用 CREATE INDEX IF NOT EXISTS 确保重复调用安全
+	indexStatements := []string{
+		// domain_monitor_results: critical for ListWithSort JOIN, Dashboard getDomainAnomalies, GetLatestMonitorResult(sBatch)
+		`CREATE INDEX IF NOT EXISTS idx_dmr_domain_checked ON domain_monitor_results(domain_id, checked_at DESC)`,
+		// alerts: used by FindActiveByTarget, SuppressActiveByTarget
+		`CREATE INDEX IF NOT EXISTS idx_alerts_target_status ON alerts(target_type, target_id, status)`,
+		// alerts: used by Dashboard getRenewFailures24h
+		`CREATE INDEX IF NOT EXISTS idx_alerts_type_created ON alerts(type, created_at)`,
+		// deployment_logs: used by GetByMachineCertificateID, EnforceRetentionLimit
+		`CREATE INDEX IF NOT EXISTS idx_deplogs_mc_created ON deployment_logs(machine_certificate_id, created_at DESC)`,
+		// deployment_logs: used by Dashboard getDeployFailures24h
+		`CREATE INDEX IF NOT EXISTS idx_deplogs_status_created ON deployment_logs(status, created_at)`,
+		// machines: used by GetByTokenHash (auth on every request!)
+		`CREATE INDEX IF NOT EXISTS idx_machines_token_hash ON machines(agent_token_hash)`,
+		// machines: used by CheckHeartbeatTimeouts, ListByHeartbeatBefore
+		`CREATE INDEX IF NOT EXISTS idx_machines_status ON machines(status)`,
+		// certificates: used by ListExpiringSoon, Dashboard getCertificateStats
+		`CREATE INDEX IF NOT EXISTS idx_certs_expire_at ON certificates(expire_at)`,
+		// domains: used by DNS sync List filter
+		`CREATE INDEX IF NOT EXISTS idx_domains_source_dnsid ON domains(source, thirdpart_dns_id)`,
+		// domains: used by ProbeAll filter
+		`CREATE INDEX IF NOT EXISTS idx_domains_monitor_enabled ON domains(monitor_enabled)`,
+		// machine_certificates: used by GetByMachineID, CountByCertificateIDs
+		`CREATE INDEX IF NOT EXISTS idx_mc_machine_id ON machine_certificates(machine_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_mc_certificate_id ON machine_certificates(certificate_id)`,
+		// thirdpart_dns_sync_logs: used by GetSyncLogs
+		`CREATE INDEX IF NOT EXISTS idx_sync_logs_dnsid_synced ON thirdpart_dns_sync_logs(thirdpart_dns_id, synced_at DESC)`,
+		// audit_logs: used by List ORDER BY
+		`CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at DESC)`,
+	}
+	for _, stmt := range indexStatements {
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("create index failed: %w\nStatement: %s", err, stmt)
+		}
+	}
+
 	return nil
 }
 
