@@ -127,13 +127,25 @@ func run() error {
 	auditLogRepo := repository.NewAuditLogRepository(sqlDB)
 	dnsRepo := repository.NewThirdpartDNSRepository(sqlDB)
 
+	// Initialize sanitizer (fail-closed: service must not start if regex compilation fails)
+	sanitizer, err := service.NewSanitizer()
+	if err != nil {
+		log.Fatalf("FATAL: sanitizer initialization failed: %v", err)
+	}
+
 	// Initialize services
 	authService := service.NewAuthService(userRepo, runtimeCfg, jwtSecret)
 	initService := service.NewInitService(db, userRepo, configPath, runtimeCfg)
+
+	// Ensure init_state table is consistent on startup (non-fatal)
+	if err := initService.EnsureInitState(context.Background()); err != nil {
+		log.Printf("[WARN] EnsureInitState failed: %v", err)
+	}
+
 	machineService := service.NewMachineService(machineRepo, runtimeCfg)
 	certService := service.NewCertificateService(certRepo, sqlDB)
 	mcService := service.NewMachineCertificateService(mcRepo)
-	deployLogService := service.NewDeploymentLogService(deployLogRepo)
+	deployLogService := service.NewDeploymentLogService(deployLogRepo, sanitizer)
 	alertService := service.NewAlertService(alertRepo, channelRepo)
 	auditLogService := service.NewAuditLogService(auditLogRepo)
 	dashboardService := service.NewDashboardService(sqlDB)
@@ -164,6 +176,10 @@ func run() error {
 		jwtSecret:   jwtSecret,
 	}
 	_ = authService // used indirectly via adapter
+
+	// Create rate limiter for login endpoints
+	rateLimiter := middleware.NewRateLimiter(20, 10, 15*time.Minute, 15*time.Minute)
+	defer rateLimiter.Stop()
 
 	// Initialize handlers
 	initHandler := handler.NewInitHandler(initService)
@@ -220,8 +236,8 @@ func run() error {
 	agentHandler.RegisterRoutes(r, machineRepo, alertService, auditLogRepo)
 
 	// Register auth login routes (no auth middleware needed)
-	r.Post("/api/auth/login", createLoginHandler(authService))
-	r.Post("/api/auth/readonly-login", createReadonlyLoginHandler(authService))
+	r.Post("/api/auth/login", createLoginHandler(authService, rateLimiter))
+	r.Post("/api/auth/readonly-login", createReadonlyLoginHandler(authService, rateLimiter))
 
 	// Register Turnstile config route (no auth needed — frontend calls before login)
 	turnstileHandler := handler.NewTurnstileHandler(runtimeCfg)
@@ -318,7 +334,7 @@ func generateJWTSecret() []byte {
 }
 
 // createLoginHandler creates the login endpoint handler.
-func createLoginHandler(authService *service.AuthService) http.HandlerFunc {
+func createLoginHandler(authService *service.AuthService, rateLimiter *middleware.RateLimiter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var input struct {
 			Username       string `json:"username"`
@@ -335,8 +351,21 @@ func createLoginHandler(authService *service.AuthService) http.HandlerFunc {
 		}
 
 		remoteIP := service.GetBestEffortRemoteIP(r)
+
+		// Check rate limit before attempting login
+		if rateLimiter.IsBlocked(remoteIP, input.Username) {
+			writeJSON(w, http.StatusTooManyRequests, map[string]interface{}{
+				"code":    429,
+				"message": "请求过于频繁，请稍后重试",
+			})
+			return
+		}
+
 		token, err := authService.Login(r.Context(), input.Username, input.Password, input.TurnstileToken, remoteIP)
 		if err != nil {
+			// Record failure for rate limiting
+			rateLimiter.RecordFailure(remoteIP, input.Username)
+
 			// Turnstile errors return specific message
 			if errors.Is(err, service.ErrTurnstileRequired) || errors.Is(err, service.ErrTurnstileFailed) {
 				writeJSON(w, http.StatusForbidden, map[string]interface{}{
@@ -352,6 +381,9 @@ func createLoginHandler(authService *service.AuthService) http.HandlerFunc {
 			return
 		}
 
+		// Record success — reset rate limit counters
+		rateLimiter.RecordSuccess(remoteIP, input.Username)
+
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"code":    200,
 			"message": "login successful",
@@ -363,7 +395,7 @@ func createLoginHandler(authService *service.AuthService) http.HandlerFunc {
 }
 
 // createReadonlyLoginHandler creates the readonly login endpoint handler.
-func createReadonlyLoginHandler(authService *service.AuthService) http.HandlerFunc {
+func createReadonlyLoginHandler(authService *service.AuthService, rateLimiter *middleware.RateLimiter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var input struct {
 			Password       string `json:"password"`
@@ -379,8 +411,21 @@ func createReadonlyLoginHandler(authService *service.AuthService) http.HandlerFu
 		}
 
 		remoteIP := service.GetBestEffortRemoteIP(r)
+
+		// Check rate limit — readonly-login only uses IP dimension
+		if rateLimiter.IsIPBlocked(remoteIP) {
+			writeJSON(w, http.StatusTooManyRequests, map[string]interface{}{
+				"code":    429,
+				"message": "请求过于频繁，请稍后重试",
+			})
+			return
+		}
+
 		token, err := authService.LoginReadonly(r.Context(), input.Password, input.TurnstileToken, remoteIP)
 		if err != nil {
+			// Record failure — only IP dimension (no username for readonly-login)
+			rateLimiter.RecordFailure(remoteIP, "")
+
 			// Turnstile errors return specific message
 			if errors.Is(err, service.ErrTurnstileRequired) || errors.Is(err, service.ErrTurnstileFailed) {
 				writeJSON(w, http.StatusForbidden, map[string]interface{}{
@@ -395,6 +440,9 @@ func createReadonlyLoginHandler(authService *service.AuthService) http.HandlerFu
 			})
 			return
 		}
+
+		// Record success — reset IP counter
+		rateLimiter.RecordSuccess(remoteIP, "")
 
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"code":    200,

@@ -2,11 +2,16 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"sync"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/ssl-manager/ssl-manager/internal/config"
 	"github.com/ssl-manager/ssl-manager/internal/database"
 	"github.com/ssl-manager/ssl-manager/internal/model"
@@ -15,8 +20,11 @@ import (
 
 // Errors for initialization flow.
 var (
-	ErrAlreadyInitialized = errors.New("system is already initialized")
-	ErrInitNotComplete    = errors.New("system initialization is not complete")
+	ErrAlreadyInitialized    = errors.New("system is already initialized")
+	ErrInitNotComplete       = errors.New("system initialization is not complete")
+	ErrUsernameRequired      = errors.New("username is required")
+	ErrPasswordRequired      = errors.New("password is required")
+	ErrPasswordTooShort      = errors.New("password must be at least 6 characters")
 )
 
 // InitService handles the system initialization flow.
@@ -90,45 +98,101 @@ type CreateAdminInput struct {
 }
 
 // CreateAdmin creates the first admin user during initialization.
-// Returns ErrAlreadyInitialized if an admin user already exists.
-func (s *InitService) CreateAdmin(ctx context.Context, input CreateAdminInput) (*model.User, error) {
-	// Check if already initialized
-	initialized, err := s.CheckInitialized(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if initialized {
-		return nil, ErrAlreadyInitialized
-	}
-
-	// Validate input
+// All state checks and writes happen within a single DB transaction
+// (SQLite serialized writes guarantee mutual exclusion).
+// Returns the created user, the plain init token, and any error.
+// Returns ErrAlreadyInitialized if a completed init_state record exists.
+// Returns ErrInitPendingNotExpired if an unexpired pending init_state exists.
+func (s *InitService) CreateAdmin(ctx context.Context, input CreateAdminInput) (*model.User, string, error) {
+	// Validate input before starting transaction
 	if input.Username == "" {
-		return nil, errors.New("username is required")
+		return nil, "", ErrUsernameRequired
 	}
 	if input.Password == "" {
-		return nil, errors.New("password is required")
+		return nil, "", ErrPasswordRequired
 	}
 	if len(input.Password) < 6 {
-		return nil, errors.New("password must be at least 6 characters")
+		return nil, "", ErrPasswordTooShort
 	}
 
-	// Create admin user
+	// Begin transaction — all checks and writes are within this tx
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, "", fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	// 1. Check if a completed record exists (pending_init=0)
+	//    → if yes: system already initialized, return 403
+	hasCompleted, err := s.db.HasCompletedInitState(tx)
+	if err != nil {
+		return nil, "", fmt.Errorf("check completed init_state: %w", err)
+	}
+	if hasCompleted {
+		return nil, "", ErrAlreadyInitialized
+	}
+
+	// 2. Check if an active pending record exists (pending_init=1)
+	pending, err := s.db.GetPendingInitState(tx)
+	if err != nil {
+		return nil, "", fmt.Errorf("get pending init_state: %w", err)
+	}
+
+	if pending != nil {
+		if !IsInitStateExpired(pending) {
+			// Unexpired pending admin exists → reject to prevent race condition
+			return nil, "", ErrInitPendingNotExpired
+		}
+		// Pending is expired → delete old admin + old init_state
+		if err := s.db.DeleteUserTx(tx, pending.AdminID); err != nil {
+			return nil, "", fmt.Errorf("delete expired pending admin: %w", err)
+		}
+		if err := s.db.DeleteInitState(tx, pending.ID); err != nil {
+			return nil, "", fmt.Errorf("delete expired init_state: %w", err)
+		}
+	}
+
+	// 3. Create new admin user
 	user := &model.User{
 		Username:     input.Username,
-		PasswordHash: input.Password, // UserRepository.Create will hash this
+		PasswordHash: input.Password, // CreateUserTx will hash this
 		Role:         "admin",
 	}
-
-	if err := s.userRepo.Create(ctx, user); err != nil {
-		return nil, fmt.Errorf("failed to create admin user: %w", err)
+	if err := s.db.CreateUserTx(tx, user); err != nil {
+		return nil, "", fmt.Errorf("failed to create admin user: %w", err)
 	}
 
-	// Mark as initialized
+	// 4. Generate 32 bytes crypto/rand token → hex encode → sha256Hex
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		return nil, "", fmt.Errorf("generate init token: %w", err)
+	}
+	plainToken := hex.EncodeToString(tokenBytes)
+	tokenHash := sha256Hex(plainToken)
+
+	// 5. Insert init_state (pending_init=true, expires_at=now+30min)
+	state := &database.InitState{
+		ID:          uuid.New().String(),
+		AdminID:     user.ID,
+		TokenHash:   tokenHash,
+		ExpiresAt:   time.Now().Add(30 * time.Minute),
+		PendingInit: true,
+	}
+	if err := s.db.InsertInitState(tx, state); err != nil {
+		return nil, "", fmt.Errorf("insert init_state: %w", err)
+	}
+
+	// 6. Commit — atomic completion
+	if err := tx.Commit(); err != nil {
+		return nil, "", fmt.Errorf("commit tx: %w", err)
+	}
+
+	// Mark as initialized in memory
 	s.mu.Lock()
 	s.initialized = true
 	s.mu.Unlock()
 
-	return user, nil
+	return user, plainToken, nil
 }
 
 // SaveConfigInput holds the input for saving system configuration.
@@ -145,24 +209,27 @@ type SaveConfigInput struct {
 }
 
 // SaveConfig saves the system configuration to config.json during initialization.
-// Only allowed when admin has been created but config has not yet been saved.
-// Returns ErrAlreadyInitialized if the config was already saved.
-func (s *InitService) SaveConfig(ctx context.Context, input SaveConfigInput) (*config.Config, error) {
-	// Only allow config save if admin has been created (system is in init phase)
-	initialized, err := s.CheckInitialized(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if !initialized {
-		return nil, ErrInitNotComplete
+// Requires a valid initToken (from CreateAdmin response) to authenticate the request.
+// Flow: validate token → save config file → mark init_state completed.
+// On file save failure: keeps pending token valid for retry.
+// On DB mark failure after file save: returns 500, keeps pending token (EnsureInitState fixes on restart).
+func (s *InitService) SaveConfig(ctx context.Context, initToken string, input SaveConfigInput) (*config.Config, error) {
+	// 1. Validate token: SHA256(initToken) → compare with init_state.token_hash → check not expired
+	if initToken == "" {
+		return nil, ErrInvalidInitToken
 	}
 
-	// Check if config was already saved — if so, reject (use /api/system/config instead)
-	s.mu.RLock()
-	alreadySaved := s.configSaved
-	s.mu.RUnlock()
-	if alreadySaved {
-		return nil, ErrAlreadyInitialized
+	hash := sha256Hex(initToken)
+
+	state, err := s.db.GetPendingInitState(nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query init_state: %w", err)
+	}
+	if state == nil || state.TokenHash != hash {
+		return nil, ErrInvalidInitToken
+	}
+	if IsInitStateExpired(state) {
+		return nil, ErrInitTokenExpired
 	}
 
 	// Build config from input, starting with defaults
@@ -237,17 +304,32 @@ func (s *InitService) SaveConfig(ctx context.Context, input SaveConfigInput) (*c
 		}
 	}
 
-	// Save config to file
+	// 2. Save config to file
 	if err := config.SaveConfig(s.configPath, cfg); err != nil {
+		// File save failure: init_state stays pending, token remains valid for retry
 		return nil, fmt.Errorf("failed to save config: %w", err)
 	}
 
-	// Update the in-memory runtime config so all services see the new values
+	// 3. File saved successfully → atomically consume the init token
+	//    Conditional UPDATE: only succeeds if pending_init=1 AND token_hash matches
+	//    This prevents concurrent SaveConfig requests from both succeeding
+	if err := s.db.ConsumeInitToken(nil, state.ID, hash); err != nil {
+		if err == database.ErrInitTokenAlreadyConsumed {
+			// Another concurrent request already consumed the token
+			return nil, ErrInvalidInitToken
+		}
+		// ⚠️ File saved but DB update failed — return 500, keep pending token
+		// EnsureInitState will fix this on next restart
+		fmt.Printf("WARNING: config file saved but DB completion mark failed: %v\n", err)
+		return nil, fmt.Errorf("config saved but failed to mark initialization complete: %w", err)
+	}
+
+	// 4. DB update success → update runtime config
 	if s.runtimeCfg != nil {
 		s.runtimeCfg.Update(cfg)
 	}
 
-	// Mark config as saved — subsequent calls to /init/config will be rejected
+	// Mark config as saved in memory
 	s.mu.Lock()
 	s.configSaved = true
 	s.mu.Unlock()
@@ -262,17 +344,129 @@ func (s *InitService) IsInitialized() bool {
 	return s.initialized
 }
 
-// IsFullyInitialized returns true when both admin is created and config is saved.
-// Used by InitMiddleware to determine if /init/* should return 403.
+// IsFullyInitialized returns true when init_state table has a completed record (pending_init=0).
+// This is the single authority for "system is fully initialized" — used by InitMiddleware.
+// It does NOT rely on admin existence or config file presence; the init_state table is authoritative.
 func (s *InitService) IsFullyInitialized(ctx context.Context) (bool, error) {
-	initialized, err := s.CheckInitialized(ctx)
+	hasCompleted, err := s.db.HasCompletedInitState(nil)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("IsFullyInitialized: %w", err)
 	}
-	if !initialized {
-		return false, nil
+	return hasCompleted, nil
+}
+
+// EnsureInitState checks and backfills the init_state table on startup.
+// This handles three scenarios:
+// 1. SaveConfig succeeded (config file exists) but DB completed mark failed — convert pending to completed.
+// 2. Legacy system upgrade — admin + config exist but no init_state row — backfill a completed record.
+// 3. Expired pending with no config — delete the stale pending admin and init_state so system resets to needs_admin.
+// Non-fatal: caller should log warnings but not crash if this fails.
+func (s *InitService) EnsureInitState(ctx context.Context) error {
+	// 1. Check if completed record already exists → nothing to do
+	hasCompleted, err := s.db.HasCompletedInitState(nil)
+	if err != nil {
+		return fmt.Errorf("EnsureInitState: failed to check completed init_state: %w", err)
 	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.configSaved, nil
+	if hasCompleted {
+		return nil
+	}
+
+	// 2. Check if admin exists + config file exists + no completed record
+	hasAdmin, err := s.db.HasAdminUser()
+	if err != nil {
+		return fmt.Errorf("EnsureInitState: failed to check admin user: %w", err)
+	}
+	_, configErr := os.Stat(s.configPath)
+	configExists := configErr == nil
+
+	if hasAdmin && configExists {
+		// Check if a pending row exists — prefer converting it over creating new
+		pending, err := s.db.GetPendingInitState(nil)
+		if err != nil {
+			return fmt.Errorf("EnsureInitState: failed to query pending state: %w", err)
+		}
+		if pending != nil {
+			// Scenario: SaveConfig file saved but DB completed mark failed, then restart.
+			// Convert the pending row to completed.
+			log.Printf("[INFO] EnsureInitState: converting pending row %s to completed (config file exists)", pending.ID)
+			return s.db.UpdateInitStateToCompleted(nil, pending.ID)
+		}
+
+		// Scenario: Legacy system upgrade — no pending row, admin + config already exist.
+		// Backfill a completed record so GetPhase returns "completed".
+		log.Printf("[INFO] EnsureInitState: backfilling completed record for legacy system")
+		backfillState := &database.InitState{
+			ID:          uuid.New().String(),
+			AdminID:     "backfill-legacy",
+			TokenHash:   "",
+			ExpiresAt:   time.Now(),
+			PendingInit: false,
+			CompletedAt: timePtr(time.Now()),
+		}
+		return s.db.InsertInitState(nil, backfillState)
+	}
+
+	// 3. Check for expired pending with no config file → clean up stale admin
+	if hasAdmin && !configExists {
+		pending, err := s.db.GetPendingInitState(nil)
+		if err != nil {
+			return fmt.Errorf("EnsureInitState: failed to query pending state: %w", err)
+		}
+		if pending != nil && IsInitStateExpired(pending) {
+			// Expired pending admin, never completed init → delete admin and init_state
+			// so system resets to "needs_admin" phase
+			log.Printf("[INFO] EnsureInitState: cleaning up expired pending admin %s (token expired, no config)", pending.AdminID)
+			tx, err := s.db.Begin()
+			if err != nil {
+				return fmt.Errorf("EnsureInitState: begin tx: %w", err)
+			}
+			defer tx.Rollback()
+
+			if err := s.db.DeleteUserTx(tx, pending.AdminID); err != nil {
+				return fmt.Errorf("EnsureInitState: delete expired admin: %w", err)
+			}
+			if err := s.db.DeleteInitState(tx, pending.ID); err != nil {
+				return fmt.Errorf("EnsureInitState: delete expired init_state: %w", err)
+			}
+			if err := tx.Commit(); err != nil {
+				return fmt.Errorf("EnsureInitState: commit: %w", err)
+			}
+
+			// Reset memory state
+			s.mu.Lock()
+			s.initialized = false
+			s.mu.Unlock()
+		}
+	}
+
+	return nil
+}
+
+// GetPhase returns the frontend-facing initialization phase:
+// "completed" — system is fully initialized
+// "needs_config" — admin exists, waiting for config (active pending token)
+// "needs_admin" — no admin yet, or pending token expired
+func (s *InitService) GetPhase(ctx context.Context) (string, error) {
+	hasCompleted, err := s.db.HasCompletedInitState(nil)
+	if err != nil {
+		return "", fmt.Errorf("GetPhase: failed to check completed: %w", err)
+	}
+	if hasCompleted {
+		return "completed", nil
+	}
+
+	pending, err := s.db.GetPendingInitState(nil)
+	if err != nil {
+		return "", fmt.Errorf("GetPhase: failed to get pending: %w", err)
+	}
+	if pending != nil && !IsInitStateExpired(pending) {
+		return "needs_config", nil
+	}
+
+	return "needs_admin", nil
+}
+
+// timePtr returns a pointer to the given time value.
+func timePtr(t time.Time) *time.Time {
+	return &t
 }

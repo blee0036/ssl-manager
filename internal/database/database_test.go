@@ -51,6 +51,7 @@ func TestNewDB_AllTablesCreated(t *testing.T) {
 		"audit_logs",
 		"thirdpart_dns",
 		"thirdpart_dns_sync_logs",
+		"init_state",
 	}
 
 	for _, table := range expectedTables {

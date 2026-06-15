@@ -54,7 +54,11 @@ func setupDeploymentLogHandler(t *testing.T) (*DeploymentLogHandler, *chi.Mux, *
 
 	db := setupDeploymentLogTestDB(t)
 	logRepo := repository.NewDeploymentLogRepository(db)
-	logService := service.NewDeploymentLogService(logRepo)
+	sanitizer, err := service.NewSanitizer()
+	if err != nil {
+		t.Fatalf("failed to create sanitizer: %v", err)
+	}
+	logService := service.NewDeploymentLogService(logRepo, sanitizer)
 	handler := NewDeploymentLogHandler(logService)
 
 	r := chi.NewRouter()
@@ -275,7 +279,11 @@ func TestDeploymentLogHandler_ListByMachineCertificate_OnlyReturnsMatchingMC(t *
 func TestDeploymentLogHandler_RegisterRoutes(t *testing.T) {
 	db := setupDeploymentLogTestDB(t)
 	logRepo := repository.NewDeploymentLogRepository(db)
-	logService := service.NewDeploymentLogService(logRepo)
+	sanitizer, err := service.NewSanitizer()
+	if err != nil {
+		t.Fatalf("failed to create sanitizer: %v", err)
+	}
+	logService := service.NewDeploymentLogService(logRepo, sanitizer)
 	handler := NewDeploymentLogHandler(logService)
 
 	r := chi.NewRouter()

@@ -13,6 +13,10 @@ import {
 import type { FormInst, FormRules } from 'naive-ui';
 import { saveConfig } from '@/service/api/init';
 
+const props = defineProps<{
+  initToken: string;
+}>();
+
 const emit = defineEmits<{
   success: [];
 }>();
@@ -82,7 +86,7 @@ async function handleSubmit() {
 
   loading.value = true;
   try {
-    await saveConfig(model.value);
+    await saveConfig(model.value, props.initToken);
     message.success('配置保存成功');
     emit('success');
   } catch (err: any) {

@@ -5,7 +5,7 @@ import type { FormInst, FormRules } from 'naive-ui';
 import { createAdmin } from '@/service/api/init';
 
 const emit = defineEmits<{
-  success: [];
+  success: [token: string];
 }>();
 
 const message = useMessage();
@@ -50,12 +50,13 @@ async function handleSubmit() {
 
   loading.value = true;
   try {
-    await createAdmin({
+    const res = await createAdmin({
       username: model.value.username,
       password: model.value.password,
     });
+    const token = res.data?.data?.init_token ?? '';
     message.success('管理员创建成功');
-    emit('success');
+    emit('success', token);
   } catch (err: any) {
     const msg = err?.response?.data?.message || '创建失败，请重试';
     message.error(msg);

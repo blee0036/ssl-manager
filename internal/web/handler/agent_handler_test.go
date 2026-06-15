@@ -179,7 +179,11 @@ func setupAgentHandler(t *testing.T) (*AgentHandler, *chi.Mux, *sql.DB, string, 
 	}
 	machineService := service.NewMachineService(machineRepo, config.NewRuntimeConfig(cfg))
 	mcService := service.NewMachineCertificateService(mcRepo)
-	deployLogService := service.NewDeploymentLogService(deployLogRepo)
+	sanitizer, err := service.NewSanitizer()
+	if err != nil {
+		t.Fatalf("failed to create sanitizer: %v", err)
+	}
+	deployLogService := service.NewDeploymentLogService(deployLogRepo, sanitizer)
 
 	handler := NewAgentHandler(machineService, mcService, deployLogService, certRepo, mcRepo, &mockAgentAlertSender{})
 
@@ -189,7 +193,7 @@ func setupAgentHandler(t *testing.T) (*AgentHandler, *chi.Mux, *sql.DB, string, 
 
 	// Insert a test machine with this token hash
 	now := time.Now().UTC()
-	_, err := db.Exec(`INSERT INTO machines (
+	_, err = db.Exec(`INSERT INTO machines (
 		id, name, ip, hostname, os, arch, tags, remark, status,
 		agent_version, agent_token_hash, agent_token_revoked_at,
 		last_heartbeat_at, created_at, updated_at
@@ -799,7 +803,11 @@ func TestAgentHandler_RegisterRoutes(t *testing.T) {
 	}
 	machineService := service.NewMachineService(machineRepo, config.NewRuntimeConfig(cfg))
 	mcService := service.NewMachineCertificateService(mcRepo)
-	deployLogService := service.NewDeploymentLogService(deployLogRepo)
+	sanitizer, err := service.NewSanitizer()
+	if err != nil {
+		t.Fatalf("failed to create sanitizer: %v", err)
+	}
+	deployLogService := service.NewDeploymentLogService(deployLogRepo, sanitizer)
 
 	handler := NewAgentHandler(machineService, mcService, deployLogService, certRepo, mcRepo, &mockAgentAlertSender{})
 

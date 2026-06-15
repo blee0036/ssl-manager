@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -54,6 +55,11 @@ func NewAgentHandler(
 // All routes require Agent Token authentication via AgentAuthMiddleware.
 func (h *AgentHandler) RegisterRoutes(r chi.Router, machineRepo middleware.MachineRepository, alertSender middleware.AgentAlertSender, auditRepo middleware.AuditRepository) {
 	r.Route("/api/agent", func(r chi.Router) {
+		// Body size limiter — reject oversized payloads before auth processing
+		r.Use(middleware.BodyLimiter(map[string]int64{
+			"/api/agent/deployment-logs": 1 << 20, // 1 MB
+			"/api/agent/heartbeat":       1 << 16, // 64 KB
+		}))
 		// All agent routes require agent token authentication
 		r.Use(middleware.AgentAuthMiddleware(machineRepo, alertSender))
 		r.Use(middleware.AuditMiddleware(auditRepo))
@@ -78,6 +84,11 @@ func (h *AgentHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 
 	var info model.HeartbeatInfo
 	if err := json.NewDecoder(r.Body).Decode(&info); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			writeErrorResponse(w, http.StatusRequestEntityTooLarge, "request entity too large", "")
+			return
+		}
 		writeErrorResponse(w, http.StatusBadRequest, "invalid request body", err.Error())
 		return
 	}
@@ -259,6 +270,11 @@ func (h *AgentHandler) CreateDeploymentLog(w http.ResponseWriter, r *http.Reques
 
 	var req createDeploymentLogRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			writeErrorResponse(w, http.StatusRequestEntityTooLarge, "request entity too large", "")
+			return
+		}
 		writeErrorResponse(w, http.StatusBadRequest, "invalid request body", err.Error())
 		return
 	}
@@ -320,9 +336,10 @@ func (h *AgentHandler) CreateDeploymentLog(w http.ResponseWriter, r *http.Reques
 
 	// Send alert if deployment failed
 	if req.Status == "failed" && h.alertSender != nil {
+		summary := service.TruncateField(log.ErrorMessage, service.MaxAlertSummaryLen)
 		alertContent := fmt.Sprintf(
-			"Certificate deployment failed on machine %s for certificate %s. Error: %s",
-			machine.Name, req.CertificateID, req.ErrorMessage,
+			"Deployment failed on %s: %s (log_id: %s)",
+			machine.Name, summary, log.ID,
 		)
 		_ = h.alertSender.SendAlert(
 			r.Context(), "critical", "deploy_failed",
@@ -337,7 +354,7 @@ func (h *AgentHandler) CreateDeploymentLog(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Update machine_certificate's last_deploy_status, last_deploy_at, last_deploy_message
-	if err := h.mcRepo.UpdateDeployStatus(r.Context(), req.MachineCertificateID, req.Status, req.ErrorMessage); err != nil {
+	if err := h.mcRepo.UpdateDeployStatus(r.Context(), req.MachineCertificateID, req.Status, log.ErrorMessage); err != nil {
 		// Log the error but don't fail the request since the log was already saved
 		writeSuccessResponse(w, http.StatusOK, "deployment log saved, but failed to update deploy status", nil)
 		return

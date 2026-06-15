@@ -33,27 +33,15 @@ func (h *InitHandler) RegisterRoutes(r chi.Router) {
 // Returns 200 with phase info if system needs initialization.
 // Returns 403 if system is already fully initialized.
 func (h *InitHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
-	fullyInit, err := h.initService.IsFullyInitialized(r.Context())
+	phase, err := h.initService.GetPhase(r.Context())
 	if err != nil {
 		writeErrorResponse(w, http.StatusInternalServerError, "failed to check initialization status", "")
 		return
 	}
 
-	if fullyInit {
+	if phase == "completed" {
 		writeErrorResponse(w, http.StatusForbidden, "system is already initialized", "")
 		return
-	}
-
-	// Determine which phase we're in
-	hasAdmin, err := h.initService.CheckInitialized(r.Context())
-	if err != nil {
-		writeErrorResponse(w, http.StatusInternalServerError, "failed to check initialization status", "")
-		return
-	}
-
-	phase := "needs_admin"
-	if hasAdmin {
-		phase = "needs_config"
 	}
 
 	writeSuccessResponse(w, http.StatusOK, "system needs initialization", map[string]interface{}{
@@ -63,19 +51,9 @@ func (h *InitHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 // CreateAdmin creates the first admin user during initialization.
-// Returns 403 if admin user already exists.
+// The service layer (InitService.CreateAdmin) is the single authority on whether creation
+// is allowed — it handles completed/unexpired-pending/expired-pending cases within a transaction.
 func (h *InitHandler) CreateAdmin(w http.ResponseWriter, r *http.Request) {
-	// Check if admin already exists
-	hasAdmin, err := h.initService.CheckInitialized(r.Context())
-	if err != nil {
-		writeErrorResponse(w, http.StatusInternalServerError, "failed to check initialization status", "")
-		return
-	}
-	if hasAdmin {
-		writeErrorResponse(w, http.StatusForbidden, "admin user already exists", "")
-		return
-	}
-
 	// Parse request body
 	var input service.CreateAdminInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -83,28 +61,42 @@ func (h *InitHandler) CreateAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create admin user
-	user, err := h.initService.CreateAdmin(r.Context(), input)
+	// Create admin user — service handles all state checks within a transaction
+	user, initToken, err := h.initService.CreateAdmin(r.Context(), input)
 	if err != nil {
 		switch err {
 		case service.ErrAlreadyInitialized:
 			writeErrorResponse(w, http.StatusForbidden, "system is already initialized", "")
-		default:
+		case service.ErrInitPendingNotExpired:
+			writeErrorResponse(w, http.StatusConflict, err.Error(), "")
+		case service.ErrUsernameRequired, service.ErrPasswordRequired, service.ErrPasswordTooShort:
 			writeErrorResponse(w, http.StatusBadRequest, err.Error(), "")
+		default:
+			// Internal errors (DB, crypto, transaction) — don't leak details
+			writeErrorResponse(w, http.StatusInternalServerError, "internal error during admin creation", "")
 		}
 		return
 	}
 
 	writeSuccessResponse(w, http.StatusCreated, "admin user created", map[string]interface{}{
-		"id":       user.ID,
-		"username": user.Username,
-		"role":     user.Role,
+		"id":         user.ID,
+		"username":   user.Username,
+		"role":       user.Role,
+		"init_token": initToken,
 	})
 }
 
 // SaveConfig saves the system configuration during initialization.
-// Returns 403 if system is already fully initialized (config already exists).
+// Requires X-Init-Token header for authentication.
+// Returns 403 if token is missing, invalid, or expired.
 func (h *InitHandler) SaveConfig(w http.ResponseWriter, r *http.Request) {
+	// Extract and validate init token BEFORE parsing body
+	initToken := r.Header.Get("X-Init-Token")
+	if initToken == "" {
+		writeErrorResponse(w, http.StatusForbidden, "invalid init token", "")
+		return
+	}
+
 	// Parse request body
 	var input service.SaveConfigInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -112,16 +104,20 @@ func (h *InitHandler) SaveConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Save config
-	cfg, err := h.initService.SaveConfig(r.Context(), input)
+	// Save config (full token hash validation happens inside the service)
+	cfg, err := h.initService.SaveConfig(r.Context(), initToken, input)
 	if err != nil {
 		switch err {
 		case service.ErrAlreadyInitialized:
 			writeErrorResponse(w, http.StatusForbidden, "system is already initialized", "")
 		case service.ErrInitNotComplete:
 			writeErrorResponse(w, http.StatusBadRequest, "admin user must be created first", "")
+		case service.ErrInvalidInitToken:
+			writeErrorResponse(w, http.StatusForbidden, "invalid init token", "")
+		case service.ErrInitTokenExpired:
+			writeErrorResponse(w, http.StatusForbidden, "init token expired", "")
 		default:
-			writeErrorResponse(w, http.StatusBadRequest, err.Error(), "")
+			writeErrorResponse(w, http.StatusInternalServerError, err.Error(), "")
 		}
 		return
 	}

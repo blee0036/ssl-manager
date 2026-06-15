@@ -31,6 +31,26 @@ func (db *DB) Migrate() error {
 		return fmt.Errorf("migrate removed_domains column: %w", err)
 	}
 
+	// init_state 表迁移
+	initStateStatements := []string{
+		`CREATE TABLE IF NOT EXISTS init_state (
+			id TEXT PRIMARY KEY,
+			admin_id TEXT NOT NULL,
+			token_hash TEXT NOT NULL DEFAULT '',
+			expires_at TEXT NOT NULL,
+			pending_init INTEGER NOT NULL DEFAULT 1,
+			completed_at TEXT
+		)`,
+		// 单活跃 pending 约束：同一时刻最多只能有一个 pending_init=1 的行
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_init_state_single_pending
+			ON init_state(pending_init) WHERE pending_init = 1`,
+	}
+	for _, stmt := range initStateStatements {
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("init_state migration failed: %w\nStatement: %s", err, stmt)
+		}
+	}
+
 	// 幂等索引创建：使用 CREATE INDEX IF NOT EXISTS 确保重复调用安全
 	indexStatements := []string{
 		// domain_monitor_results: critical for ListWithSort JOIN, Dashboard getDomainAnomalies, GetLatestMonitorResult(sBatch)

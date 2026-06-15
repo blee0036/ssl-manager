@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
-import { NCard, NSteps, NStep, NSpin } from 'naive-ui';
+import { NCard, NSteps, NStep, NSpin, NAlert } from 'naive-ui';
 import { getInitStatus } from '@/service/api/init';
 import AdminForm from './components/AdminForm.vue';
 import ConfigForm from './components/ConfigForm.vue';
@@ -12,9 +12,12 @@ type Phase = 'needs_admin' | 'needs_config' | 'completed';
 
 const phase = ref<Phase | null>(null);
 const loading = ref(true);
-
-/** 当前步骤索引（用于 NSteps 展示） */
 const currentStep = ref(1);
+
+/** 内存中保存 init_token（刷新页面后丢失） */
+const initToken = ref<string>('');
+/** token 是否因刷新丢失 */
+const tokenLost = ref(false);
 
 async function fetchStatus() {
   loading.value = true;
@@ -30,27 +33,30 @@ async function fetchStatus() {
 
     phase.value = p;
     currentStep.value = p === 'needs_admin' ? 1 : 2;
+
+    // 如果处于 needs_config 但没有 token（页面刷新），提示用户
+    if (p === 'needs_config' && !initToken.value) {
+      tokenLost.value = true;
+    }
   } catch (err: any) {
     const status = err?.response?.status;
     if (status === 403) {
-      // 系统已初始化，跳转登录（不显示权限 toast，skipErrorNotify 已在 API 层设置）
       router.replace('/login');
       return;
     }
-    // 其他错误：保持 loading 状态，用户可刷新重试
     console.error('[Init] Failed to fetch status:', err);
   } finally {
     loading.value = false;
   }
 }
 
-function handleAdminSuccess() {
-  // 管理员创建成功，重新获取状态进入阶段二
+function handleAdminSuccess(token: string) {
+  initToken.value = token;
+  tokenLost.value = false;
   fetchStatus();
 }
 
 function handleConfigSuccess() {
-  // 配置保存成功，跳转登录
   router.replace('/login');
 }
 
@@ -65,13 +71,11 @@ onMounted(() => {
       <h1 class="text-2xl font-bold text-center mb-2">系统初始化</h1>
       <p class="text-center text-gray-500 mb-6">首次使用请完成以下配置</p>
 
-      <!-- 步骤指示器 -->
       <NSteps :current="currentStep" class="mb-6">
         <NStep title="创建管理员" />
         <NStep title="系统配置" />
       </NSteps>
 
-      <!-- 加载状态 -->
       <div v-if="loading" class="flex-center py-12">
         <NSpin size="large" />
       </div>
@@ -83,7 +87,14 @@ onMounted(() => {
 
       <!-- 阶段二：系统配置 -->
       <NCard v-else-if="phase === 'needs_config'" title="系统配置">
-        <ConfigForm @success="handleConfigSuccess" />
+        <NAlert v-if="tokenLost" type="warning" class="mb-4">
+          页面已刷新，初始化令牌已丢失。请等待令牌过期（30分钟）后重新执行第一步创建管理员。
+        </NAlert>
+        <ConfigForm
+          v-if="!tokenLost"
+          :init-token="initToken"
+          @success="handleConfigSuccess"
+        />
       </NCard>
     </div>
   </div>

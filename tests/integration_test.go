@@ -35,14 +35,15 @@ import (
 
 // testApp holds all the components needed for integration testing.
 type testApp struct {
-	router     *chi.Mux
-	db         *sql.DB
-	dataDir    string
-	jwtSecret  []byte
-	cfg        *config.Config
-	authSvc    *service.AuthService
-	userRepo   *repository.UserRepository
+	router      *chi.Mux
+	db          *sql.DB
+	dataDir     string
+	jwtSecret   []byte
+	cfg         *config.Config
+	authSvc     *service.AuthService
+	userRepo    *repository.UserRepository
 	machineRepo *repository.MachineRepository
+	initService *service.InitService
 }
 
 // authServiceAdapter adapts service.AuthService to the middleware.AuthService interface.
@@ -132,7 +133,11 @@ func setupTestApp(t *testing.T) *testApp {
 	machineService := service.NewMachineService(machineRepo, runtimeCfg)
 	certService := service.NewCertificateService(certRepo, sqlDB)
 	mcService := service.NewMachineCertificateService(mcRepo)
-	deployLogService := service.NewDeploymentLogService(deployLogRepo)
+	sanitizer, err := service.NewSanitizer()
+	if err != nil {
+		t.Fatalf("failed to create sanitizer: %v", err)
+	}
+	deployLogService := service.NewDeploymentLogService(deployLogRepo, sanitizer)
 	alertService := service.NewAlertService(alertRepo, channelRepo)
 	auditLogService := service.NewAuditLogService(auditLogRepo)
 	dashboardService := service.NewDashboardService(sqlDB)
@@ -195,6 +200,7 @@ func setupTestApp(t *testing.T) *testApp {
 		authSvc:     authService,
 		userRepo:    userRepo,
 		machineRepo: machineRepo,
+		initService: initService,
 	}
 }
 
@@ -255,6 +261,13 @@ func createTestAdmin(t *testing.T, app *testApp) (username, password string) {
 	if err := app.userRepo.Create(context.Background(), user); err != nil {
 		t.Fatalf("failed to create test admin: %v", err)
 	}
+
+	// Backfill init_state completed record so InitMiddleware allows normal API access.
+	// This mimics what production startup does: admin + config exist → EnsureInitState backfills.
+	if err := app.initService.EnsureInitState(context.Background()); err != nil {
+		t.Fatalf("failed to ensure init state: %v", err)
+	}
+
 	return username, password
 }
 

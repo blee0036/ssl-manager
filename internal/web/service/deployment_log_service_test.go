@@ -36,7 +36,11 @@ func setupDeploymentLogServiceTestDB(t *testing.T) *DeploymentLogService {
 	}
 
 	repo := repository.NewDeploymentLogRepository(db)
-	return NewDeploymentLogService(repo)
+	sanitizer, err := NewSanitizer()
+	if err != nil {
+		t.Fatalf("failed to create sanitizer: %v", err)
+	}
+	return NewDeploymentLogService(repo, sanitizer)
 }
 
 func newTestDeploymentLog(machineCertID, machineID, certID, status string, createdAt time.Time) *model.DeploymentLog {

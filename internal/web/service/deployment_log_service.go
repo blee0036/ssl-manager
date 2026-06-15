@@ -17,16 +17,21 @@ const (
 
 // DeploymentLogService handles deployment log business logic.
 type DeploymentLogService struct {
-	repo *repository.DeploymentLogRepository
+	repo      *repository.DeploymentLogRepository
+	sanitizer *Sanitizer
 }
 
 // NewDeploymentLogService creates a new DeploymentLogService.
-func NewDeploymentLogService(repo *repository.DeploymentLogRepository) *DeploymentLogService {
-	return &DeploymentLogService{repo: repo}
+func NewDeploymentLogService(repo *repository.DeploymentLogRepository, sanitizer *Sanitizer) *DeploymentLogService {
+	return &DeploymentLogService{repo: repo, sanitizer: sanitizer}
 }
 
 // Create saves a deployment log and enforces the 30-record retention limit per machine certificate.
+// It sanitizes and truncates all fields before persistence to prevent sensitive data leaks.
 func (s *DeploymentLogService) Create(ctx context.Context, log *model.DeploymentLog) error {
+	// Sanitize → truncate → re-sanitize (handled by SanitizeDeploymentLog)
+	s.sanitizer.SanitizeDeploymentLog(log)
+
 	if err := s.repo.Create(ctx, log); err != nil {
 		return fmt.Errorf("failed to create deployment log: %w", err)
 	}
