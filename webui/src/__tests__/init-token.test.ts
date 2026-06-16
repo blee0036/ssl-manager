@@ -34,7 +34,7 @@ describe('Init Token API Layer', () => {
     const res = await createAdmin({ username: 'admin', password: 'pass123' });
 
     expect(request.post).toHaveBeenCalledWith('/init/admin', { username: 'admin', password: 'pass123' });
-    expect(res.data.data.init_token).toBe('abc123hextoken');
+    expect(res.data.data!.init_token).toBe('abc123hextoken');
   });
 
   it('saveConfig should include X-Init-Token header', async () => {
@@ -84,7 +84,7 @@ describe('Init Token Loss Detection', () => {
   });
 
   it('should not detect token loss in needs_admin phase', () => {
-    const phase = 'needs_admin';
+    const phase: string = 'needs_admin';
     const initToken = '';
     const tokenLost = phase === 'needs_config' && !initToken;
     expect(tokenLost).toBe(false);
