@@ -1,13 +1,16 @@
 <script setup lang="ts">
-import { reactive, ref, watch, computed } from 'vue';
+import { reactive, watch, computed } from 'vue';
 import type { FormRules } from 'naive-ui';
 import {
   NModal, NCard, NForm, NFormItem, NInput, NSelect, NSwitch,
   NButton, NSpace, useMessage
 } from 'naive-ui';
 import { useForm } from '@/hooks/useForm';
-import CodeBlock from '@/components/CodeBlock/index.vue';
 import { createAlertChannel, updateAlertChannel } from '@/service/api/alert';
+import type { CreateAlertChannelRequest, UpdateAlertChannelRequest } from '@/service/api/alert';
+import { serializeConfig, isConfigEmpty } from '../utils/channelConfig';
+import type { ConfigFields } from '../utils/channelConfig';
+import { getConfigRules } from '../utils/channelValidation';
 
 interface Props {
   show: boolean;
@@ -33,83 +36,50 @@ const dialogTitle = computed(() => (isEdit.value ? '编辑通知渠道' : '创�
 interface FormModel {
   name: string;
   type: 'lark' | 'telegram';
-  config_json: string;
   enabled: boolean;
+  // 配置字段直接放在 formModel 中，让 NForm 的 path 能正确解析到值
+  webhook_url: string;
+  bot_token: string;
+  chat_id: string;
 }
 
 const formModel = reactive<FormModel>({
   name: '',
   type: 'lark',
-  config_json: '',
   enabled: true,
+  webhook_url: '',
+  bot_token: '',
+  chat_id: '',
 });
+
+/** configFields 视图：指向 formModel 中的配置字段，保持 serializeConfig/isConfigEmpty 接口兼容 */
+const configFields = computed<ConfigFields>(() => ({
+  webhook_url: formModel.webhook_url,
+  bot_token: formModel.bot_token,
+  chat_id: formModel.chat_id,
+}));
 
 const typeOptions = [
   { label: 'Lark', value: 'lark' },
   { label: 'Telegram', value: 'telegram' },
 ];
 
-/** JSON 校验错误信息 */
-const jsonError = ref('');
-
-/** 校验 config_json 是否为合法 JSON */
-function validateConfigJson(_rule: unknown, value: string): boolean | Error {
-  if (!value || value.trim() === '') {
-    jsonError.value = '';
-    // Allow empty on edit (means "keep existing config")
-    if (isEdit.value) return true;
-    return new Error('请输入 JSON 配置');
-  }
-  try {
-    JSON.parse(value);
-    jsonError.value = '';
-    return true;
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : 'JSON 格式错误';
-    jsonError.value = msg;
-    return new Error(`JSON 格式错误: ${msg}`);
-  }
-}
-
 const rules: FormRules = {
   name: [{ required: true, message: '请输入渠道名称', trigger: 'blur' }],
   type: [{ required: true, message: '请选择渠道类型', trigger: 'change' }],
-  config_json: [
-    {
-      required: true,
-      validator: validateConfigJson,
-      trigger: 'blur',
-    },
-  ],
 };
 
-/** 是否显示 config_json 预览 */
-const showConfigPreview = computed(() => {
-  if (!formModel.config_json || formModel.config_json.trim() === '') return false;
-  try {
-    JSON.parse(formModel.config_json);
-    return true;
-  } catch {
-    return false;
+const configRules = computed(() => getConfigRules(isEdit.value, formModel.type));
+
+// Task 1.2: 类型切换时清空所有配置字段
+watch(
+  () => formModel.type,
+  () => {
+    formModel.webhook_url = '';
+    formModel.bot_token = '';
+    formModel.chat_id = '';
   }
-});
-
-/** 格式化后的 config_json 用于预览 */
-const formattedConfigJson = computed(() => {
-  try {
-    return JSON.stringify(JSON.parse(formModel.config_json), null, 2);
-  } catch {
-    return formModel.config_json;
-  }
-});
-
-/** 是否包含脱敏值（星号） */
-const hasMaskedValue = (str: string): boolean => {
-  return str.includes('***') || str.includes('****');
-};
-
-/** 编辑时原始加载的 config_json（用于判断是否修改） */
-const originalConfigJson = ref('');
+);
 
 watch(
   () => props.show,
@@ -118,17 +88,18 @@ watch(
       if (props.editItem) {
         formModel.name = props.editItem.name;
         formModel.type = props.editItem.type;
-        formModel.config_json = '';
         formModel.enabled = props.editItem.enabled;
-        originalConfigJson.value = props.editItem.config_json || '';
+        formModel.webhook_url = '';
+        formModel.bot_token = '';
+        formModel.chat_id = '';
       } else {
         formModel.name = '';
         formModel.type = 'lark';
-        formModel.config_json = '';
         formModel.enabled = true;
-        originalConfigJson.value = '';
+        formModel.webhook_url = '';
+        formModel.bot_token = '';
+        formModel.chat_id = '';
       }
-      jsonError.value = '';
       resetFields();
     }
   }
@@ -137,22 +108,20 @@ watch(
 async function onSubmit() {
   const success = await handleSubmit(async () => {
     if (isEdit.value && props.editItem) {
-      // On edit: only include config_json if user provided a new value
-      const payload: Record<string, any> = {
+      const payload: UpdateAlertChannelRequest = {
         name: formModel.name,
-        type: formModel.type,
         enabled: formModel.enabled,
       };
-      if (formModel.config_json.trim() !== '' && !hasMaskedValue(formModel.config_json)) {
-        payload.config_json = formModel.config_json;
+      if (!isConfigEmpty(formModel.type, configFields.value)) {
+        payload.config_json = serializeConfig(formModel.type, configFields.value);
       }
       await updateAlertChannel(props.editItem.id, payload);
       message.success('通知渠道已更新');
     } else {
-      const payload = {
+      const payload: CreateAlertChannelRequest = {
         name: formModel.name,
         type: formModel.type,
-        config_json: formModel.config_json,
+        config_json: serializeConfig(formModel.type, configFields.value),
         enabled: formModel.enabled,
       };
       await createAlertChannel(payload);
@@ -201,23 +170,30 @@ function handleClose() {
           <NSelect
             v-model:value="formModel.type"
             :options="typeOptions"
+            :disabled="isEdit"
             placeholder="请选择渠道类型"
           />
         </NFormItem>
 
-        <NFormItem label="JSON 配置" path="config_json">
-          <NInput
-            v-model:value="formModel.config_json"
-            type="textarea"
-            :placeholder="isEdit ? '留空保留原配置，输入新值则替换' : '请输入 JSON 格式的渠道配置'"
-            :rows="6"
-          />
-        </NFormItem>
+        <!-- Lark 配置字段 -->
+        <template v-if="formModel.type === 'lark'">
+          <NFormItem label="Webhook URL" path="webhook_url" :rule="configRules.webhook_url">
+            <NInput v-model:value="formModel.webhook_url" placeholder="https://..." />
+          </NFormItem>
+          <div v-if="isEdit" class="field-hint">留空则保持原值</div>
+        </template>
 
-        <!-- JSON 预览 -->
-        <NFormItem v-if="showConfigPreview" label="配置预览">
-          <CodeBlock :content="formattedConfigJson" language="json" max-height="200px" />
-        </NFormItem>
+        <!-- Telegram 配置字段 -->
+        <template v-if="formModel.type === 'telegram'">
+          <NFormItem label="Bot Token" path="bot_token" :rule="configRules.bot_token">
+            <NInput v-model:value="formModel.bot_token" placeholder="输入 Bot Token" />
+          </NFormItem>
+          <div v-if="isEdit" class="field-hint">留空则保持原值</div>
+          <NFormItem label="Chat ID" path="chat_id" :rule="configRules.chat_id">
+            <NInput v-model:value="formModel.chat_id" placeholder="输入 Chat ID" />
+          </NFormItem>
+          <div v-if="isEdit" class="field-hint">留空则保持原值</div>
+        </template>
 
         <NFormItem label="启用" path="enabled">
           <NSwitch v-model:value="formModel.enabled" />
@@ -235,3 +211,12 @@ function handleClose() {
     </NCard>
   </NModal>
 </template>
+
+<style scoped>
+.field-hint {
+  font-size: 12px;
+  color: #999;
+  margin-top: -12px;
+  margin-bottom: 12px;
+}
+</style>
