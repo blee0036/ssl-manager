@@ -70,6 +70,11 @@ const model = ref<Api.SystemConfig>({
     retention_days: 7,
     min_keep_count: 1000,
   },
+  domain_expiry: {
+    expiry_threshold_days: 14,
+    refresh_interval_minutes: 1440,
+    whois_timeout_seconds: 10,
+  },
 });
 
 /** 表单校验规则 */
@@ -97,6 +102,11 @@ async function fetchConfig() {
       ...data,
       thirdpart_dns: data.thirdpart_dns ?? { sync_interval_minutes: 360 },
       cleanup: data.cleanup ?? { retention_days: 7, min_keep_count: 1000 },
+      domain_expiry: data.domain_expiry ?? {
+        expiry_threshold_days: 14,
+        refresh_interval_minutes: 1440,
+        whois_timeout_seconds: 10,
+      },
     };
     // 重置敏感字段显示状态
     showViewPassword.value = false;
@@ -262,6 +272,40 @@ onMounted(() => {
             class="w-full"
           />
         </NFormItem>
+      </NCard>
+
+      <!-- 域名到期监控（WHOIS） -->
+      <NCard title="域名到期监控（WHOIS）" size="small" class="mb-4">
+        <NFormItem label="到期预警阈值（天）">
+          <NInputNumber
+            v-model:value="model.domain_expiry!.expiry_threshold_days"
+            :min="1"
+            :max="3650"
+            class="w-full"
+            placeholder="14"
+          />
+        </NFormItem>
+        <span class="text-xs text-gray-500">根域名注册到期剩余天数低于此值时触发预警，推荐值 14</span>
+        <NFormItem label="WHOIS 刷新间隔（分钟）" style="margin-top: 12px">
+          <NInputNumber
+            v-model:value="model.domain_expiry!.refresh_interval_minutes"
+            :min="0"
+            :max="525600"
+            class="w-full"
+            placeholder="1440"
+          />
+        </NFormItem>
+        <span class="text-xs text-gray-500">周期性刷新根域名 WHOIS 到期信息的间隔，设为 0 停用周期刷新，推荐值 1440（1 天），最大 525600（365 天）</span>
+        <NFormItem label="WHOIS 查询超时（秒）" style="margin-top: 12px">
+          <NInputNumber
+            v-model:value="model.domain_expiry!.whois_timeout_seconds"
+            :min="1"
+            :max="300"
+            class="w-full"
+            placeholder="10"
+          />
+        </NFormItem>
+        <span class="text-xs text-gray-500">单次 WHOIS 查询的超时时间，推荐值 10</span>
       </NCard>
 
       <!-- DNS 同步 -->

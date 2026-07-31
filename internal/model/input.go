@@ -175,3 +175,63 @@ type AlertFilter struct {
 	Page    int    `json:"page,omitempty"`
 	PerPage int    `json:"per_page,omitempty"`
 }
+
+// === 根域名到期监控相关 ===
+
+// CreateRootDomainInput 手动添加根域名输入
+type CreateRootDomainInput struct {
+	Name string `json:"name"`
+}
+
+// UpdateRootDomainInput 更新根域名（仅监控开关与忽略告警）
+type UpdateRootDomainInput struct {
+	MonitorEnabled *bool `json:"monitor_enabled,omitempty"`
+	AlertIgnored   *bool `json:"alert_ignored,omitempty"`
+}
+
+// ImportRootDomainsInput 从 Cloudflare 导入根域名输入（api_token 或 config_id 二选一）
+type ImportRootDomainsInput struct {
+	APIToken string `json:"api_token,omitempty"`
+	ConfigID string `json:"config_id,omitempty"`
+}
+
+// RootDomainImportResult 导入结果
+type RootDomainImportResult struct {
+	Imported []string `json:"imported"` // 新登记的 registrable domain
+	Skipped  []string `json:"skipped"`  // 已存在被跳过的 registrable domain
+	Total    int      `json:"total"`    // 扫描到的 zone 数
+}
+
+// NewRootDomainImportResult 创建 RootDomainImportResult，并将切片初始化为空数组，
+// 确保 JSON 输出 [] 而非 null（沿用 NewDNSSyncResult 的做法）。
+func NewRootDomainImportResult() *RootDomainImportResult {
+	return &RootDomainImportResult{
+		Imported: []string{},
+		Skipped:  []string{},
+		Total:    0,
+	}
+}
+
+// RootDomainFilter 简单过滤条件（供 reconcile / 内部列举使用）
+type RootDomainFilter struct {
+	Source         string `json:"source,omitempty"`
+	MonitorEnabled *bool  `json:"monitor_enabled,omitempty"`
+}
+
+// RootDomainListParams 列表查询参数（筛选/排序/分页）
+type RootDomainListParams struct {
+	// Filtering
+	Name           string `json:"name,omitempty"`
+	Source         string `json:"source,omitempty"`
+	FilterStatus   string `json:"filter_status,omitempty"` // expiring|expired|unknown|ok|enabled|disabled|ignored
+	MonitorEnabled *bool  `json:"monitor_enabled,omitempty"`
+	AlertIgnored   *bool  `json:"alert_ignored,omitempty"`
+
+	// Sorting
+	SortBy    string `json:"sort_by,omitempty"`    // name|source|expiry_date|last_checked_at|created_at
+	SortOrder string `json:"sort_order,omitempty"` // asc|desc
+
+	// Pagination
+	Page    int `json:"page,omitempty"`
+	PerPage int `json:"per_page,omitempty"`
+}

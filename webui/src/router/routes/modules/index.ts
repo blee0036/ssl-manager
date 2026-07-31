@@ -64,6 +64,18 @@ export const businessRoutes: RouteRecordRaw[] = [
     },
   },
   {
+    path: '/root-domains',
+    name: 'RootDomain',
+    component: () => import('@/views/root-domain/index.vue'),
+    meta: {
+      title: '域名到期监控',
+      icon: 'i-carbon-calendar',
+      requiresAuth: true,
+      roles: ['admin', 'user', 'readonly'],
+      order: 5.5,
+    },
+  },
+  {
     path: '/thirdpart-dns',
     name: 'ThirdpartDns',
     component: () => import('@/views/thirdpart-dns/index.vue'),

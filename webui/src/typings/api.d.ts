@@ -171,6 +171,32 @@ declare namespace Api {
     invalid: string[];
   }
 
+  // === 根域名到期监控 ===
+
+  /** 根域名注册到期监控（WHOIS 注册到期，独立于 TLS 证书到期监控） */
+  interface RootDomain {
+    id: string;
+    name: string;
+    source: string;
+    registrable_domain: string;
+    expiry_date: string | null;
+    days_remaining: number | null;
+    last_checked_at: string | null;
+    last_status: string;
+    last_error: string;
+    monitor_enabled: boolean;
+    alert_ignored: boolean;
+    created_at: string;
+    updated_at: string;
+  }
+
+  /** 从 Cloudflare 导入根域名的结果 */
+  interface RootDomainImportResult {
+    imported: string[];
+    skipped: string[];
+    total: number;
+  }
+
   // === 第三方 DNS ===
 
   /** 第三方 DNS */
@@ -301,6 +327,11 @@ declare namespace Api {
     cleanup?: {
       retention_days: number;
       min_keep_count: number;
+    };
+    domain_expiry?: {
+      expiry_threshold_days: number;
+      refresh_interval_minutes: number;
+      whois_timeout_seconds: number;
     };
   }
 

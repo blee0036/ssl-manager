@@ -22,7 +22,8 @@ import (
 // --- Mock implementations ---
 
 type mockAlertSender struct {
-	alerts []sentAlert
+	alerts   []sentAlert
+	resolved []resolvedAlert
 }
 
 type sentAlert struct {
@@ -32,6 +33,18 @@ type sentAlert struct {
 	Content    string
 	TargetType string
 	TargetID   string
+}
+
+// resolvedAlert records a single AutoResolve invocation (target type, target id,
+// alert type) so tests can assert which alerts were auto-resolved — e.g. Property
+// 9 (renewal auto-resolves both domain_expiring and domain_expired). These
+// recordings are kept SEPARATE from SendAlert recordings (.alerts), so tests that
+// only inspect sent alerts (e.g. Property 8, whose days>threshold tier expects an
+// empty .alerts log) are unaffected by AutoResolve now recording here.
+type resolvedAlert struct {
+	TargetType string
+	TargetID   string
+	AlertType  string
 }
 
 func (m *mockAlertSender) SendAlert(_ context.Context, level, alertType, title, content, targetType, targetID string) error {
@@ -46,7 +59,13 @@ func (m *mockAlertSender) SendAlert(_ context.Context, level, alertType, title, 
 	return nil
 }
 
-func (m *mockAlertSender) AutoResolve(_ context.Context, _, _, _ string) {}
+func (m *mockAlertSender) AutoResolve(_ context.Context, targetType, targetID, alertType string) {
+	m.resolved = append(m.resolved, resolvedAlert{
+		TargetType: targetType,
+		TargetID:   targetID,
+		AlertType:  alertType,
+	})
+}
 
 func (m *mockAlertSender) SuppressActiveByTarget(_ context.Context, _, _ string) error { return nil }
 

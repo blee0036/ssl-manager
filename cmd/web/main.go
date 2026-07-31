@@ -16,9 +16,9 @@ import (
 	"syscall"
 	"time"
 
+	_ "github.com/glebarez/sqlite"
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
-	_ "github.com/glebarez/sqlite"
 
 	"github.com/ssl-manager/ssl-manager/internal/certbot"
 	"github.com/ssl-manager/ssl-manager/internal/cloudflare"
@@ -126,6 +126,7 @@ func run() error {
 	channelRepo := repository.NewNotificationChannelRepository(sqlDB)
 	auditLogRepo := repository.NewAuditLogRepository(sqlDB)
 	dnsRepo := repository.NewThirdpartDNSRepository(sqlDB)
+	rootDomainRepo := repository.NewRootDomainRepository(sqlDB)
 
 	// Initialize sanitizer (fail-closed: service must not start if regex compilation fails)
 	sanitizer, err := service.NewSanitizer()
@@ -158,6 +159,11 @@ func run() error {
 	cfClient := cloudflare.NewClient()
 	dnsService := service.NewThirdpartDNSService(dnsRepo, domainRepo, cfClient, alertService, runtimeCfg)
 
+	// Domain expiry (WHOIS registration expiry) monitor service — independent of
+	// domainMonitorService (TLS certificate monitoring). Reuses dnsService as its
+	// Cloudflare zone scanner (ZoneScanner) and alertService as its alert sender.
+	domainExpiryService := service.NewDomainExpiryService(rootDomainRepo, dnsService, alertService, runtimeCfg)
+
 	// Certbot wrapper
 	certbotExecutor := certbot.NewDefaultExecutor()
 	certbotWrapper := certbot.NewCertbotWrapper(runtimeCfg, certbotExecutor)
@@ -168,6 +174,9 @@ func run() error {
 	)
 	schedulerService.SetDomainMonitorService(domainMonitorService)
 	schedulerService.SetThirdpartDNSService(dnsService, dnsRepo)
+	// Must be set before schedulerService.Start so the periodic expiry refresh
+	// ticker and the DNS-sync reconcile step have the service available.
+	schedulerService.SetDomainExpiryService(domainExpiryService)
 
 	// Create auth service adapter for middleware
 	authAdapter := &authServiceAdapter{
@@ -193,6 +202,9 @@ func run() error {
 	dashboardHandler := handler.NewDashboardHandler(dashboardService)
 	systemHandler := handler.NewSystemHandler(configPath, runtimeCfg)
 	dnsHandler := handler.NewThirdpartDNSHandler(dnsService)
+	// dnsService doubles as the DNSConfigResolver, resolving an api_token from a
+	// stored DNS config_id on the import path (GetConfig).
+	rootDomainHandler := handler.NewRootDomainHandler(domainExpiryService, dnsService)
 	// Initialize VersionCache for agent binary version management
 	versionCache := service.NewVersionCache("./bin", 5*time.Minute)
 
@@ -232,6 +244,7 @@ func run() error {
 	dashboardHandler.RegisterRoutes(r, authAdapter, auditLogRepo)
 	systemHandler.RegisterRoutes(r, authAdapter, auditLogRepo)
 	dnsHandler.RegisterRoutes(r, authAdapter, auditLogRepo)
+	rootDomainHandler.RegisterRoutes(r, authAdapter, auditLogRepo)
 	userHandler.RegisterRoutes(r, authAdapter, auditLogRepo)
 	agentHandler.RegisterRoutes(r, machineRepo, alertService, auditLogRepo)
 

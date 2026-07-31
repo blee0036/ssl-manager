@@ -24,6 +24,7 @@ type Config struct {
 	Turnstile     TurnstileConfig     `json:"turnstile"`
 	ThirdpartDNS  ThirdpartDNSConfig  `json:"thirdpart_dns"`
 	Cleanup       CleanupConfig       `json:"cleanup"`
+	DomainExpiry  DomainExpiryConfig  `json:"domain_expiry"`
 }
 
 // ServerConfig holds settings for the Web Backend server.
@@ -58,8 +59,8 @@ type ReadonlyConfig struct {
 
 // DomainMonitorConfig holds settings for domain SSL monitoring.
 type DomainMonitorConfig struct {
-	DefaultPort     int `json:"default_port"`      // 默认监控端口，默认 443
-	IntervalMinutes int `json:"interval_minutes"`  // 监控间隔分钟数，默认 60
+	DefaultPort     int `json:"default_port"`     // 默认监控端口，默认 443
+	IntervalMinutes int `json:"interval_minutes"` // 监控间隔分钟数，默认 60
 }
 
 // TurnstileConfig holds settings for Cloudflare Turnstile human verification.
@@ -79,6 +80,27 @@ type CleanupConfig struct {
 	RetentionDays int `json:"retention_days"` // 保留天数，超过此天数的旧记录会被清理，默认 7；<=0 禁用清理
 	MinKeepCount  int `json:"min_keep_count"` // 每个表最少保留的记录数，默认 1000
 }
+
+// DomainExpiryConfig holds settings for domain registration expiry monitoring (WHOIS).
+type DomainExpiryConfig struct {
+	ExpiryThresholdDays    int `json:"expiry_threshold_days"`    // 到期预警阈值天数，默认 14
+	RefreshIntervalMinutes int `json:"refresh_interval_minutes"` // 刷新间隔分钟数，默认 1440；<=0 停用周期刷新
+	WhoisTimeoutSeconds    int `json:"whois_timeout_seconds"`    // 单次 WHOIS 查询超时秒数，默认 10
+}
+
+// MaxRefreshIntervalMinutes caps domain_expiry.refresh_interval_minutes.
+//
+// It serves two purposes:
+//  1. A sane business ceiling — refreshing WHOIS registration expiry less often
+//     than once every 365 days is never useful.
+//  2. A safety bound that keeps the value far below the point where
+//     time.Duration(minutes) * time.Minute overflows int64 nanoseconds (~153,722,867
+//     minutes on 64-bit). An overflowed, non-positive duration passed to
+//     time.NewTicker panics and would crash the process, so rejecting anything
+//     above this cap during config validation prevents that failure mode.
+//
+// 525600 == 365 * 24 * 60 minutes (365 days).
+const MaxRefreshIntervalMinutes = 525600
 
 // DefaultConfig returns a Config with sensible default values.
 func DefaultConfig() *Config {
@@ -118,6 +140,11 @@ func DefaultConfig() *Config {
 		Cleanup: CleanupConfig{
 			RetentionDays: 7,
 			MinKeepCount:  1000,
+		},
+		DomainExpiry: DomainExpiryConfig{
+			ExpiryThresholdDays:    14,
+			RefreshIntervalMinutes: 1440,
+			WhoisTimeoutSeconds:    10,
 		},
 	}
 }
@@ -218,6 +245,24 @@ func ValidateConfig(cfg *Config) error {
 		if cfg.Turnstile.SecretKey == "" {
 			return errors.New("turnstile.secret_key is required when turnstile is enabled")
 		}
+	}
+
+	if cfg.DomainExpiry.ExpiryThresholdDays <= 0 {
+		return errors.New("domain_expiry.expiry_threshold_days must be positive")
+	}
+
+	if cfg.DomainExpiry.WhoisTimeoutSeconds <= 0 {
+		return errors.New("domain_expiry.whois_timeout_seconds must be positive")
+	}
+	// domain_expiry.refresh_interval_minutes has asymmetric validation:
+	//   - A value <= 0 is a valid "disabled" state that stops periodic WHOIS refresh
+	//     (mirrors thirdpart_dns.sync_interval_minutes semantics), so it is NOT rejected.
+	//   - A positive value is capped at MaxRefreshIntervalMinutes. Beyond that cap the
+	//     value would eventually overflow when multiplied by time.Minute, producing a
+	//     non-positive time.Duration that makes time.NewTicker panic and crash the
+	//     process. Rejecting it here stops such a config from being saved or loaded.
+	if cfg.DomainExpiry.RefreshIntervalMinutes > MaxRefreshIntervalMinutes {
+		return errors.New("domain_expiry.refresh_interval_minutes must not exceed 525600 (365 days)")
 	}
 
 	return nil

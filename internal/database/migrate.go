@@ -80,6 +80,12 @@ func (db *DB) Migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_sync_logs_dnsid_synced ON thirdpart_dns_sync_logs(thirdpart_dns_id, synced_at DESC)`,
 		// audit_logs: used by List ORDER BY
 		`CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at DESC)`,
+		// root_domains: 去重唯一键，可注册域名全局唯一（GetByRegistrableDomain / 导入去重）
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_root_domains_registrable ON root_domains(registrable_domain)`,
+		// root_domains: 周期刷新扫描启用项（ListEnabled）
+		`CREATE INDEX IF NOT EXISTS idx_root_domains_enabled ON root_domains(monitor_enabled)`,
+		// root_domains: 按到期日排序/筛选（ListWithSort）
+		`CREATE INDEX IF NOT EXISTS idx_root_domains_expiry ON root_domains(expiry_date)`,
 	}
 	for _, stmt := range indexStatements {
 		if _, err := db.Exec(stmt); err != nil {
@@ -297,5 +303,21 @@ var migrationStatements = []string{
 		status TEXT NOT NULL CHECK(status IN ('success', 'failed')),
 		error_message TEXT DEFAULT '',
 		synced_at TEXT NOT NULL
+	)`,
+
+	// 根域名注册到期监控表（独立于 domains / domain_monitor_results）
+	`CREATE TABLE IF NOT EXISTS root_domains (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL,
+		source TEXT NOT NULL DEFAULT 'manual' CHECK(source IN ('manual', 'cloudflare')),
+		registrable_domain TEXT NOT NULL,
+		expiry_date TEXT,
+		last_checked_at TEXT,
+		last_status TEXT NOT NULL DEFAULT '',
+		last_error TEXT NOT NULL DEFAULT '',
+		monitor_enabled INTEGER NOT NULL DEFAULT 1,
+		alert_ignored INTEGER NOT NULL DEFAULT 0,
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL
 	)`,
 }

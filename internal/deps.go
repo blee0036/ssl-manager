@@ -8,5 +8,8 @@ import (
 	_ "github.com/golang-jwt/jwt/v5"
 	_ "github.com/google/uuid"
 	_ "github.com/leanovate/gopter"
+	_ "github.com/likexian/whois"
+	_ "github.com/likexian/whois-parser"
 	_ "golang.org/x/crypto/bcrypt"
+	_ "golang.org/x/net/publicsuffix"
 )

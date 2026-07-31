@@ -15,6 +15,30 @@ import (
 	"github.com/ssl-manager/ssl-manager/internal/web/repository"
 )
 
+// expiryTickerDuration converts a configured RefreshIntervalMinutes value into the
+// time.Duration used to build the periodic WHOIS expiry-refresh ticker.
+//
+// It returns ok=false (meaning "disabled — do not create a ticker") in two cases:
+//   - minutes <= 0: the documented "disabled" state.
+//   - the computed time.Duration(minutes) * time.Minute is <= 0: on 64-bit systems a
+//     large positive minutes value (roughly > 153,722,867) overflows int64
+//     nanoseconds and wraps to a non-positive duration. Passing such a value to
+//     time.NewTicker panics, so we guard against it here and treat it as disabled.
+//
+// Config validation (config.MaxRefreshIntervalMinutes) already rejects out-of-range
+// positive values before they reach here; this helper is defense-in-depth so the
+// scheduler can never call time.NewTicker with a non-positive duration.
+func expiryTickerDuration(minutes int) (time.Duration, bool) {
+	if minutes <= 0 {
+		return 0, false
+	}
+	d := time.Duration(minutes) * time.Minute
+	if d <= 0 {
+		return 0, false
+	}
+	return d, true
+}
+
 // AlertSender is an interface for sending alert notifications.
 type AlertSender interface {
 	SendAlert(ctx context.Context, level, alertType, title, content, targetType, targetID string) error
@@ -45,6 +69,9 @@ type SchedulerService struct {
 	// DNS sync dependencies (NEW)
 	thirdpartDNSService *ThirdpartDNSService
 	dnsRepo             *repository.ThirdpartDNSRepository
+
+	// Domain expiry monitoring (WHOIS registration expiry)
+	domainExpiryService *DomainExpiryService
 
 	// Scheduler control
 	mu       sync.Mutex
@@ -97,6 +124,11 @@ func (s *SchedulerService) SetDomainMonitorService(svc *DomainMonitorService) {
 func (s *SchedulerService) SetThirdpartDNSService(svc *ThirdpartDNSService, repo *repository.ThirdpartDNSRepository) {
 	s.thirdpartDNSService = svc
 	s.dnsRepo = repo
+}
+
+// SetDomainExpiryService sets the domain expiry service for periodic WHOIS refresh.
+func (s *SchedulerService) SetDomainExpiryService(svc *DomainExpiryService) {
+	s.domainExpiryService = svc
 }
 
 // Start begins the scheduler's periodic execution loop.
@@ -221,6 +253,24 @@ func (s *SchedulerService) run(ctx context.Context, stopCh <-chan struct{}, dnsS
 		}
 	}()
 
+	// Expiry refresh ticker — nil means disabled (interval <= 0).
+	// NOTE: unlike CheckRenewals / RunDomainMonitor above, we deliberately do NOT
+	// run RefreshAll on startup. WHOIS servers are rate-limit sensitive, so running
+	// a full refresh on every restart could cause bursty queries and trigger limits.
+	// The first periodic refresh therefore happens after one full interval.
+	var expiryTicker *time.Ticker
+	var expiryC <-chan time.Time
+	currentExpiryInterval := s.runtimeCfg.Get().DomainExpiry.RefreshIntervalMinutes
+	if d, ok := expiryTickerDuration(currentExpiryInterval); ok {
+		expiryTicker = time.NewTicker(d)
+		expiryC = expiryTicker.C
+	}
+	defer func() {
+		if expiryTicker != nil {
+			expiryTicker.Stop()
+		}
+	}()
+
 	for {
 		select {
 		case <-stopCh:
@@ -241,6 +291,8 @@ func (s *SchedulerService) run(ctx context.Context, stopCh <-chan struct{}, dnsS
 			}
 			// Piggyback on heartbeat tick (30s) to check DNS interval config changes
 			s.checkDNSIntervalChange(&currentDNSTicker, &dnsSyncC, &currentDNSInterval)
+			// Piggyback on heartbeat tick (30s) to check expiry refresh interval config changes
+			s.checkExpiryRefreshIntervalChange(&expiryTicker, &expiryC, &currentExpiryInterval)
 		case <-domainMonitorTicker.C:
 			if err := s.RunDomainMonitor(ctx); err != nil {
 				log.Printf("[Scheduler] RunDomainMonitor error: %v", err)
@@ -258,6 +310,13 @@ func (s *SchedulerService) run(ctx context.Context, stopCh <-chan struct{}, dnsS
 			case dnsSyncTrigger <- struct{}{}:
 			default:
 				log.Println("[Scheduler] DNS sync trigger coalesced (worker busy)")
+			}
+		case <-expiryC:
+			// Periodic WHOIS registration-expiry refresh (disabled when expiryC is nil).
+			if s.domainExpiryService != nil {
+				if err := s.domainExpiryService.RefreshAll(ctx); err != nil {
+					log.Printf("[Scheduler] RefreshAll(expiry) error: %v", err)
+				}
 			}
 		}
 	}
@@ -294,6 +353,40 @@ func (s *SchedulerService) checkDNSIntervalChange(
 	}
 }
 
+// checkExpiryRefreshIntervalChange checks if the domain expiry refresh interval config has changed.
+// Handles 0→positive (enable), positive→0 (disable), and positive→positive (reschedule).
+// Faithful mirror of checkDNSIntervalChange for the WHOIS expiry refresh ticker.
+func (s *SchedulerService) checkExpiryRefreshIntervalChange(
+	expiryTicker **time.Ticker,
+	expiryC *<-chan time.Time,
+	currentExpiryInterval *int,
+) {
+	newInterval := s.runtimeCfg.Get().DomainExpiry.RefreshIntervalMinutes
+	if newInterval == *currentExpiryInterval {
+		return // no change
+	}
+
+	// Stop old ticker first
+	if *expiryTicker != nil {
+		(*expiryTicker).Stop()
+		*expiryTicker = nil
+		*expiryC = nil
+	}
+
+	*currentExpiryInterval = newInterval
+
+	if d, ok := expiryTickerDuration(newInterval); ok {
+		// Create new ticker only when the duration is safely positive.
+		*expiryTicker = time.NewTicker(d)
+		*expiryC = (*expiryTicker).C
+		log.Printf("[Scheduler] Expiry refresh interval changed to %d minutes", newInterval)
+	} else {
+		// Disabled: interval <= 0, or a positive value that overflows time.Duration
+		// (guarded so we never call time.NewTicker with a non-positive duration).
+		log.Println("[Scheduler] Expiry refresh disabled (interval <= 0 or out of range)")
+	}
+}
+
 // dnsWorker is a long-running goroutine that listens on the trigger channel.
 // Each trigger causes a serial execution of runDNSSyncAll.
 // Exits on ctx.Done() or stopCh.
@@ -308,6 +401,10 @@ func (s *SchedulerService) dnsWorker(ctx context.Context, stopCh <-chan struct{}
 			return
 		case <-trigger:
 			s.runDNSSyncAll(ctx)
+			// Reconcile cloudflare-sourced root domains on the same DNS-sync
+			// cadence (requirement 2.4). Runs serially after runDNSSyncAll within
+			// this single-threaded worker, so it is safe.
+			s.reconcileRootDomainsFromCloudflare(ctx)
 		}
 	}
 }
@@ -341,6 +438,48 @@ func (s *SchedulerService) runDNSSyncAll(ctx context.Context) {
 				log.Printf("[Scheduler] DNS sync for config %s (%s): %v", cfg.Name, cfg.ID, err)
 			}
 		}
+	}
+}
+
+// reconcileRootDomainsFromCloudflare reconciles the root-domain set against the
+// current Cloudflare zones, driven by the existing third-party DNS sync cadence
+// (requirement 2.4). It runs inside the single-threaded dnsWorker right after
+// runDNSSyncAll, so it executes serially and is safe.
+//
+// For each enabled DNS config it re-scans the zones (names only, no WHOIS) and
+// hands the collected zone names to ReconcileCloudflareZones, which additively
+// registers newly appearing root domains as source="cloudflare" and keeps the
+// existing ones (requirement 2.5: cloudflare root domains that no longer appear
+// are retained by default — never deleted or disabled here).
+//
+// Robustness: the required dependencies are nil-guarded up front, and a single
+// config's ScanZones failure is skipped (continue) so it does not stop the others.
+func (s *SchedulerService) reconcileRootDomainsFromCloudflare(ctx context.Context) {
+	if s.domainExpiryService == nil || s.thirdpartDNSService == nil || s.dnsRepo == nil {
+		return
+	}
+	configs, err := s.dnsRepo.List(ctx)
+	if err != nil {
+		log.Printf("[Scheduler] Failed to list DNS configs for root-domain reconcile: %v", err)
+		return
+	}
+	var zoneNames []string
+	for _, cfg := range configs {
+		if !cfg.Enabled {
+			continue
+		}
+		zones, err := s.thirdpartDNSService.ScanZones(ctx, cfg.APIToken)
+		if err != nil {
+			// Single config failure must not stop the others.
+			log.Printf("[Scheduler] ScanZones for config %s (%s) failed during root-domain reconcile: %v", cfg.Name, cfg.ID, err)
+			continue
+		}
+		for _, z := range zones {
+			zoneNames = append(zoneNames, z.Name)
+		}
+	}
+	if err := s.domainExpiryService.ReconcileCloudflareZones(ctx, zoneNames); err != nil {
+		log.Printf("[Scheduler] reconcile root domains error: %v", err)
 	}
 }
 
@@ -572,12 +711,12 @@ func (s *SchedulerService) renewCloudflare(ctx context.Context, cert *model.Cert
 	now := time.Now().UTC()
 	updates := map[string]interface{}{
 		"domains":            meta.Domains,
-		"expire_at":         meta.ExpireAt,
-		"issuer":            meta.Issuer,
+		"expire_at":          meta.ExpireAt,
+		"issuer":             meta.Issuer,
 		"fingerprint_sha256": meta.FingerprintSHA256,
-		"chain_valid":       meta.ChainValid,
-		"last_renew_at":     now,
-		"renew_status":      "success",
+		"chain_valid":        meta.ChainValid,
+		"last_renew_at":      now,
+		"renew_status":       "success",
 	}
 
 	if err := s.certRepo.Update(ctx, cert.ID, updates); err != nil {

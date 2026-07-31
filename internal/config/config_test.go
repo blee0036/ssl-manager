@@ -449,3 +449,89 @@ func TestLoadConfig_MissingThirdpartDNS_UsesDefault360(t *testing.T) {
 		t.Errorf("expected default SyncIntervalMinutes=360 for missing field, got %d", loaded.ThirdpartDNS.SyncIntervalMinutes)
 	}
 }
+
+func TestDefaultConfig_DomainExpiry(t *testing.T) {
+	cfg := DefaultConfig()
+
+	if cfg.DomainExpiry.ExpiryThresholdDays != 14 {
+		t.Errorf("expected DomainExpiry.ExpiryThresholdDays 14, got %d", cfg.DomainExpiry.ExpiryThresholdDays)
+	}
+	if cfg.DomainExpiry.RefreshIntervalMinutes != 1440 {
+		t.Errorf("expected DomainExpiry.RefreshIntervalMinutes 1440, got %d", cfg.DomainExpiry.RefreshIntervalMinutes)
+	}
+	if cfg.DomainExpiry.WhoisTimeoutSeconds != 10 {
+		t.Errorf("expected DomainExpiry.WhoisTimeoutSeconds 10, got %d", cfg.DomainExpiry.WhoisTimeoutSeconds)
+	}
+}
+
+func TestValidateConfig_InvalidExpiryThresholdDays(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.DomainExpiry.ExpiryThresholdDays = 0
+	if err := ValidateConfig(cfg); err == nil {
+		t.Error("expected error for zero ExpiryThresholdDays")
+	}
+
+	cfg.DomainExpiry.ExpiryThresholdDays = -1
+	if err := ValidateConfig(cfg); err == nil {
+		t.Error("expected error for negative ExpiryThresholdDays")
+	}
+}
+
+func TestValidateConfig_InvalidWhoisTimeoutSeconds(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.DomainExpiry.WhoisTimeoutSeconds = 0
+	if err := ValidateConfig(cfg); err == nil {
+		t.Error("expected error for zero WhoisTimeoutSeconds")
+	}
+
+	cfg.DomainExpiry.WhoisTimeoutSeconds = -5
+	if err := ValidateConfig(cfg); err == nil {
+		t.Error("expected error for negative WhoisTimeoutSeconds")
+	}
+}
+
+func TestValidateConfig_RefreshIntervalMinutesNonPositiveAllowed(t *testing.T) {
+	cfg := DefaultConfig()
+
+	// refresh_interval_minutes <= 0 is a valid "disabled" state that stops periodic
+	// WHOIS refresh (mirrors thirdpart_dns.sync_interval_minutes semantics). It must
+	// NOT cause a validation error.
+	cfg.DomainExpiry.RefreshIntervalMinutes = 0
+	if err := ValidateConfig(cfg); err != nil {
+		t.Errorf("expected no error for zero RefreshIntervalMinutes (disabled), got: %v", err)
+	}
+
+	cfg.DomainExpiry.RefreshIntervalMinutes = -100
+	if err := ValidateConfig(cfg); err != nil {
+		t.Errorf("expected no error for negative RefreshIntervalMinutes (disabled), got: %v", err)
+	}
+}
+
+func TestValidateConfig_RefreshIntervalMinutesUpperBound(t *testing.T) {
+	cfg := DefaultConfig()
+
+	// Boundary: exactly the max (365 days) is accepted.
+	cfg.DomainExpiry.RefreshIntervalMinutes = MaxRefreshIntervalMinutes
+	if err := ValidateConfig(cfg); err != nil {
+		t.Errorf("expected no error for RefreshIntervalMinutes == MaxRefreshIntervalMinutes (%d), got: %v", MaxRefreshIntervalMinutes, err)
+	}
+
+	// One above the max is rejected. Beyond this cap the value could eventually
+	// overflow when multiplied by time.Minute, producing a non-positive duration
+	// that makes time.NewTicker panic; rejecting it here prevents that.
+	cfg.DomainExpiry.RefreshIntervalMinutes = MaxRefreshIntervalMinutes + 1
+	if err := ValidateConfig(cfg); err == nil {
+		t.Errorf("expected error for RefreshIntervalMinutes > MaxRefreshIntervalMinutes (%d)", MaxRefreshIntervalMinutes+1)
+	}
+
+	// Sanity: 0 and a negative value remain valid "disabled" states even alongside
+	// the new upper-bound check (non-positive is never rejected).
+	cfg.DomainExpiry.RefreshIntervalMinutes = 0
+	if err := ValidateConfig(cfg); err != nil {
+		t.Errorf("expected no error for zero RefreshIntervalMinutes (disabled), got: %v", err)
+	}
+	cfg.DomainExpiry.RefreshIntervalMinutes = -1
+	if err := ValidateConfig(cfg); err != nil {
+		t.Errorf("expected no error for negative RefreshIntervalMinutes (disabled), got: %v", err)
+	}
+}

@@ -16,6 +16,7 @@ var readonlyAllowedEndpoints = []routeRule{
 	{method: "GET", path: "/api/certificates", prefix: true},
 	{method: "GET", path: "/api/machines", prefix: true},
 	{method: "GET", path: "/api/domains", prefix: true},
+	{method: "GET", path: "/api/root-domains", prefix: true},
 	{method: "GET", path: "/api/alerts", prefix: true},
 	{method: "GET", path: "/api/audit-logs", prefix: true},
 	{method: "GET", path: "/api/dashboard", prefix: true},
