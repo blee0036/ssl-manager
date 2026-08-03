@@ -89,6 +89,7 @@ type ZoneScanner interface {
 type DomainExpiryService struct {
 	repo        *repository.RootDomainRepository
 	whois       WhoisClient
+	rdap        RDAPClient // universal fallback consulted only when a WHOIS lookup errors
 	alerter     AlertSender
 	runtimeCfg  *config.RuntimeConfig
 	zoneScanner ZoneScanner // reuses ThirdpartDNSService.ScanZones
@@ -96,26 +97,33 @@ type DomainExpiryService struct {
 }
 
 // NewDomainExpiryService creates a DomainExpiryService. The default WhoisClient
-// reads the CURRENT runtime config's WhoisTimeoutSeconds on every query (via
-// NewWhoisClientFunc), so a change to whois_timeout_seconds through
+// (PRIMARY) and RDAPClient (FALLBACK) both read the CURRENT runtime config's
+// WhoisTimeoutSeconds on every query (via NewWhoisClientFunc / NewRDAPClient
+// sharing one timeout closure), so a change to whois_timeout_seconds through
 // /api/system/config takes effect on the next query without restarting the
 // process or reconstructing the service. A non-positive / unset value falls back
-// to the WHOIS client default (see resolveTimeout). Tests may override the WHOIS
-// client via SetWhoisClient.
+// to each client's own default (see their resolveTimeout). Tests may override the
+// clients via SetWhoisClient / SetRDAPClient.
 func NewDomainExpiryService(
 	repo *repository.RootDomainRepository,
 	zoneScanner ZoneScanner,
 	alerter AlertSender,
 	runtimeCfg *config.RuntimeConfig,
 ) *DomainExpiryService {
+	// Shared dynamic-timeout closure: reused by BOTH the WHOIS and RDAP clients so
+	// they honor the same runtime whois_timeout_seconds without duplication. A nil
+	// runtimeCfg (or non-positive value) yields 0, letting each client fall back to
+	// its own default.
+	timeoutFn := func() time.Duration {
+		if runtimeCfg != nil {
+			return time.Duration(runtimeCfg.Get().DomainExpiry.WhoisTimeoutSeconds) * time.Second
+		}
+		return 0
+	}
 	return &DomainExpiryService{
-		repo: repo,
-		whois: NewWhoisClientFunc(func() time.Duration {
-			if runtimeCfg != nil {
-				return time.Duration(runtimeCfg.Get().DomainExpiry.WhoisTimeoutSeconds) * time.Second
-			}
-			return 0
-		}),
+		repo:        repo,
+		whois:       NewWhoisClientFunc(timeoutFn),
+		rdap:        NewRDAPClient(timeoutFn),
 		alerter:     alerter,
 		runtimeCfg:  runtimeCfg,
 		zoneScanner: zoneScanner,
@@ -126,6 +134,12 @@ func NewDomainExpiryService(
 // so no real network requests are made).
 func (s *DomainExpiryService) SetWhoisClient(c WhoisClient) {
 	s.whois = c
+}
+
+// SetRDAPClient overrides the RDAP fallback client. Intended for tests (inject a
+// mock so no real network requests are made). Mirrors SetWhoisClient.
+func (s *DomainExpiryService) SetRDAPClient(c RDAPClient) {
+	s.rdap = c
 }
 
 // expiryThresholdDays returns the effective global expiry threshold in days,
@@ -370,14 +384,24 @@ func (s *DomainExpiryService) ReconcileCloudflareZones(ctx context.Context, zone
 // registrable domain), which keeps the serialization scheme simple and correct;
 // a delete-on-unlock scheme would reintroduce a store/lock race.
 //
+// Lookup strategy — WHOIS PRIMARY, RDAP FALLBACK:
+//   - WHOIS is queried first. On success its expiry is used.
+//   - On ANY WHOIS error (and when an RDAP client is configured) the RDAP
+//     fallback is queried. RDAP is the ICANN-mandated structured successor to
+//     WHOIS and covers newer gTLDs (e.g. .app / .dev) whose registries expose no
+//     legacy WHOIS server. On RDAP success its expiry is used and the WHOIS error
+//     is cleared; on RDAP failure the recorded error combines both
+//     ("whois: ...; rdap: ...").
+//
 // Error semantics (design "WHOIS 层失败不冒泡 Go error"):
-//   - WHOIS success -> SaveExpiryResult(&expiry, now, "success", ""), then the
-//     record is re-read and alerts are evaluated (requirements 4.3 / 4.4 / 7.1).
-//   - WHOIS failure -> SaveExpiryResult(nil, now, "failed", err): the previously
-//     known expiry_date is preserved, last_status/last_error record the failure,
-//     and NO Go error is returned — the re-read record (last_status="failed") is
-//     returned with a nil error (requirements 4.5 / 4.6 / 7.2). Alerts are not
-//     evaluated on failure (expiry unchanged).
+//   - lookup success (WHOIS or RDAP) -> SaveExpiryResult(&expiry, now, "success",
+//     ""), then the record is re-read and alerts are evaluated (requirements
+//     4.3 / 4.4 / 7.1).
+//   - lookup failure (BOTH WHOIS and RDAP) -> SaveExpiryResult(nil, now, "failed",
+//     err): the previously known expiry_date is preserved, last_status/last_error
+//     record the (combined) failure, and NO Go error is returned — the re-read
+//     record (last_status="failed") is returned with a nil error (requirements
+//     4.5 / 4.6 / 7.2). Alerts are not evaluated on failure (expiry unchanged).
 //
 // Only genuine infrastructure errors bubble up as a non-nil Go error: the id not
 // existing (GetByID -> sql.ErrNoRows, wrapped so handlers map it to 404) and DB
@@ -397,6 +421,18 @@ func (s *DomainExpiryService) RefreshOne(ctx context.Context, id string) (*model
 
 	now := time.Now().UTC()
 	expiry, werr := s.whois.LookupExpiry(ctx, rd.RegistrableDomain)
+	if werr != nil && s.rdap != nil {
+		// WHOIS (PRIMARY) failed: fall back to RDAP (the structured successor that
+		// covers TLDs with no legacy WHOIS server, e.g. .app / .dev). On RDAP
+		// success adopt its expiry and clear the error; on RDAP failure record a
+		// combined error naming both layers.
+		rexpiry, rerr := s.rdap.LookupExpiry(ctx, rd.RegistrableDomain)
+		if rerr == nil {
+			expiry, werr = rexpiry, nil
+		} else {
+			werr = fmt.Errorf("whois: %v; rdap: %v", werr, rerr)
+		}
+	}
 	if werr != nil {
 		// WHOIS-layer failure: preserve the old expiry_date (nil expiry), record
 		// the failure. Do NOT bubble as a Go error — only DB errors bubble.

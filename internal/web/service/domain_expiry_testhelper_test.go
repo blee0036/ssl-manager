@@ -160,6 +160,7 @@ type testDomainExpiryEnv struct {
 	svc     *DomainExpiryService
 	repo    *repository.RootDomainRepository
 	whois   *mockWhoisClient
+	rdap    *mockRDAPClient
 	scanner *mockZoneScanner
 	alerter *mockAlertSender
 	cfg     *config.RuntimeConfig
@@ -228,17 +229,27 @@ func newTestDomainExpiryService(t *testing.T, opts ...testEnvOption) *testDomain
 		whois.setDefaultSuccess(resolved.whoisDefault.expiry)
 	}
 
+	// Inject a default-FAILING mock RDAP client (default outcome ErrRDAPNoServer)
+	// so every existing test stays offline and preserves its expectations: a WHOIS
+	// success means RDAP is never consulted, while a WHOIS failure now also sees
+	// the RDAP fallback fail (no real network) and still records "failed" — exactly
+	// as before this fallback existed (crucial for Properties 7 and 11). Tests that
+	// exercise the fallback orchestrate per-domain outcomes on env.rdap.
+	rdap := newMockRDAPClient()
+
 	scanner := newMockZoneScanner()
 	alerter := &mockAlertSender{}
 	runtimeCfg := config.NewRuntimeConfig(resolved.cfg)
 
 	svc := NewDomainExpiryService(repo, scanner, alerter, runtimeCfg)
 	svc.SetWhoisClient(whois)
+	svc.SetRDAPClient(rdap)
 
 	return &testDomainExpiryEnv{
 		svc:     svc,
 		repo:    repo,
 		whois:   whois,
+		rdap:    rdap,
 		scanner: scanner,
 		alerter: alerter,
 		cfg:     runtimeCfg,
