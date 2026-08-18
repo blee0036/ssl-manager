@@ -21,12 +21,19 @@ func NewInitHandler(initService *service.InitService) *InitHandler {
 }
 
 // RegisterRoutes registers the initialization routes on the given router.
+//
+// NOTE: These are registered as individual routes (not via r.Route("/init", ...))
+// on purpose. r.Route()/Mount() would also install a catch-all handler on the
+// bare "/init" path itself (with no sub-path), which intercepts GET /init before
+// it can fall through to the SPA's "/*" fallback. That caused the frontend's own
+// "/init" client-side route (the init wizard page) to be shadowed by a raw 404
+// from the backend instead of being served index.html. Registering exact
+// sub-paths avoids creating any handler on bare "/init", so it falls through to
+// the SPA handler as expected.
 func (h *InitHandler) RegisterRoutes(r chi.Router) {
-	r.Route("/init", func(r chi.Router) {
-		r.Get("/status", h.GetStatus)
-		r.Post("/admin", h.CreateAdmin)
-		r.Post("/config", h.SaveConfig)
-	})
+	r.Get("/init/status", h.GetStatus)
+	r.Post("/init/admin", h.CreateAdmin)
+	r.Post("/init/config", h.SaveConfig)
 }
 
 // GetStatus returns the current initialization status.

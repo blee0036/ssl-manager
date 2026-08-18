@@ -58,6 +58,7 @@ RUN apk add --no-cache \
     certbot \
     certbot-dns-cloudflare \
     curl \
+    su-exec \
     tzdata
 
 WORKDIR /app
@@ -69,13 +70,15 @@ COPY --from=builder /out/ssl-manager-agent-linux-arm64 /app/bin/ssl-manager-agen
 COPY --from=builder /out/ssl-manager-agent-darwin-amd64 /app/bin/ssl-manager-agent-darwin-amd64
 COPY --from=builder /out/ssl-manager-agent-darwin-arm64 /app/bin/ssl-manager-agent-darwin-arm64
 COPY --from=builder /out/agent-version.txt /app/bin/agent-version.txt
+COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 
 # Copy web assets (templates and static files are embedded, but keep for reference)
 # The Go binary embeds webui/dist/ via embed.FS, so no separate copy needed.
 
 # Create data directory and certbot working directory (writable by sslmanager)
 RUN mkdir -p /app/data /app/data/certbot /app/data/certbot/work /app/data/certbot/logs /app/bin && \
-    chmod 700 /app/data
+    chmod 700 /app/data && \
+    chmod +x /app/docker-entrypoint.sh
 
 # Expose default port
 EXPOSE 8080
@@ -87,9 +90,14 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 # Volume for persistent data (SQLite DB, certificates, config, JWT secret)
 VOLUME ["/app/data"]
 
-# Run as non-root
+# Create the runtime user, but stay root at container start so the
+# entrypoint can fix up bind-mount/volume ownership on /app/data before
+# dropping privileges. Without this, a host-owned bind mount (e.g.
+# `-v $(pwd)/ssl-manager-data:/app/data`) overrides the image's chown and
+# SQLite fails with the misleading "out of memory (14)" error because the
+# non-root user can't actually write to the directory.
 RUN adduser -D -H -u 1000 sslmanager && \
     chown -R sslmanager:sslmanager /app
-USER sslmanager
 
-ENTRYPOINT ["/app/ssl-manager-web"]
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
+CMD ["/app/ssl-manager-web"]
