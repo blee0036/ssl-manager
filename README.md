@@ -39,8 +39,9 @@ http://localhost:8080
 ```bash
 docker run -d \
   --name ssl-manager \
+  --restart unless-stopped \
   -p 8080:8080 \
-  -v ssl-manager-data:/app/data \
+  -v "$(pwd)/ssl-manager-data:/app/data" \
   ghcr.io/blee0036/ssl-manager:latest
 ```
 
