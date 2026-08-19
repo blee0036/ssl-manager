@@ -20,11 +20,11 @@ import (
 
 // Errors for initialization flow.
 var (
-	ErrAlreadyInitialized    = errors.New("system is already initialized")
-	ErrInitNotComplete       = errors.New("system initialization is not complete")
-	ErrUsernameRequired      = errors.New("username is required")
-	ErrPasswordRequired      = errors.New("password is required")
-	ErrPasswordTooShort      = errors.New("password must be at least 6 characters")
+	ErrAlreadyInitialized = errors.New("system is already initialized")
+	ErrInitNotComplete    = errors.New("system initialization is not complete")
+	ErrUsernameRequired   = errors.New("username is required")
+	ErrPasswordRequired   = errors.New("password is required")
+	ErrPasswordTooShort   = errors.New("password must be at least 6 characters")
 )
 
 // InitService handles the system initialization flow.
@@ -198,6 +198,7 @@ func (s *InitService) CreateAdmin(ctx context.Context, input CreateAdminInput) (
 // SaveConfigInput holds the input for saving system configuration.
 type SaveConfigInput struct {
 	Server        *config.ServerConfig        `json:"server,omitempty"`
+	Auth          *config.AuthConfig          `json:"auth,omitempty"`
 	Agent         *config.AgentConfig         `json:"agent,omitempty"`
 	Alert         *config.AlertConfig         `json:"alert,omitempty"`
 	Certbot       *config.CertbotConfig       `json:"certbot,omitempty"`
@@ -241,6 +242,12 @@ func (s *InitService) SaveConfig(ctx context.Context, initToken string, input Sa
 		}
 		if input.Server.ListenAddr != "" {
 			cfg.Server.ListenAddr = input.Server.ListenAddr
+		}
+	}
+
+	if input.Auth != nil {
+		if input.Auth.SessionExpiryHours > 0 {
+			cfg.Auth.SessionExpiryHours = input.Auth.SessionExpiryHours
 		}
 	}
 

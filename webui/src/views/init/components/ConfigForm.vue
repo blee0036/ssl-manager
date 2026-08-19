@@ -30,6 +30,9 @@ const model = ref<Api.SystemConfig>({
     external_url: 'http://localhost:8080',
     listen_addr: ':8080',
   },
+  auth: {
+    session_expiry_hours: 24,
+  },
   agent: {
     heartbeat_timeout_seconds: 120,
     poll_interval_seconds: 30,
@@ -107,6 +110,19 @@ async function handleSubmit() {
       </NFormItem>
       <NFormItem label="监听地址" path="server.listen_addr">
         <NInput v-model:value="model.server.listen_addr" placeholder=":8080" />
+      </NFormItem>
+    </NCard>
+
+    <!-- 登录会话 -->
+    <NCard title="登录会话" size="small" class="mb-4">
+      <NFormItem label="Session 有效期（小时）">
+        <NInputNumber
+          v-model:value="model.auth!.session_expiry_hours"
+          :min="1"
+          :max="8760"
+          class="w-full"
+          placeholder="24"
+        />
       </NFormItem>
     </NCard>
 

@@ -296,6 +296,9 @@ declare namespace Api {
       external_url: string;
       listen_addr: string;
     };
+    auth?: {
+      session_expiry_hours: number;
+    };
     agent: {
       heartbeat_timeout_seconds: number;
       poll_interval_seconds: number;

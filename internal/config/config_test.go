@@ -41,6 +41,51 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.DomainMonitor.IntervalMinutes != 60 {
 		t.Errorf("expected DomainMonitor.IntervalMinutes 60, got %d", cfg.DomainMonitor.IntervalMinutes)
 	}
+	if cfg.Auth.SessionExpiryHours != 24 {
+		t.Errorf("expected Auth.SessionExpiryHours 24, got %d", cfg.Auth.SessionExpiryHours)
+	}
+}
+
+func TestValidateConfig_SessionExpiryHours(t *testing.T) {
+	t.Run("zero is rejected", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.Auth.SessionExpiryHours = 0
+		if err := ValidateConfig(cfg); err == nil {
+			t.Error("expected error for zero session_expiry_hours")
+		}
+	})
+
+	t.Run("negative is rejected", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.Auth.SessionExpiryHours = -1
+		if err := ValidateConfig(cfg); err == nil {
+			t.Error("expected error for negative session_expiry_hours")
+		}
+	})
+
+	t.Run("exceeds max is rejected", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.Auth.SessionExpiryHours = MaxSessionExpiryHours + 1
+		if err := ValidateConfig(cfg); err == nil {
+			t.Error("expected error for session_expiry_hours exceeding MaxSessionExpiryHours")
+		}
+	})
+
+	t.Run("at max is accepted", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.Auth.SessionExpiryHours = MaxSessionExpiryHours
+		if err := ValidateConfig(cfg); err != nil {
+			t.Errorf("expected no error at MaxSessionExpiryHours, got: %v", err)
+		}
+	})
+
+	t.Run("positive value within range is accepted", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.Auth.SessionExpiryHours = 1
+		if err := ValidateConfig(cfg); err != nil {
+			t.Errorf("expected no error for session_expiry_hours=1, got: %v", err)
+		}
+	})
 }
 
 func TestDefaultConfigPath(t *testing.T) {

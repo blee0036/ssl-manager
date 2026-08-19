@@ -16,6 +16,7 @@ const DefaultConfigPath = "./data/config.json"
 // Config represents the global system configuration stored in config.json.
 type Config struct {
 	Server        ServerConfig        `json:"server"`
+	Auth          AuthConfig          `json:"auth"`
 	Agent         AgentConfig         `json:"agent"`
 	Alert         AlertConfig         `json:"alert"`
 	Certbot       CertbotConfig       `json:"certbot"`
@@ -31,6 +32,11 @@ type Config struct {
 type ServerConfig struct {
 	ExternalURL string `json:"external_url"` // Web 外部访问地址
 	ListenAddr  string `json:"listen_addr"`  // 监听地址，默认 :8080
+}
+
+// AuthConfig holds settings for authentication/session behavior.
+type AuthConfig struct {
+	SessionExpiryHours int `json:"session_expiry_hours"` // 登录 session（JWT）有效期小时数，默认 24
 }
 
 // AgentConfig holds settings for Agent communication.
@@ -88,6 +94,17 @@ type DomainExpiryConfig struct {
 	WhoisTimeoutSeconds    int `json:"whois_timeout_seconds"`    // 单次 WHOIS 查询超时秒数，默认 10
 }
 
+// MaxSessionExpiryHours caps auth.session_expiry_hours.
+//
+// It serves the same two purposes as MaxRefreshIntervalMinutes below: a sane
+// business ceiling (a login session valid for more than a year is never
+// useful) and a safety bound that keeps time.Duration(hours) * time.Hour far
+// below the int64 nanosecond overflow point, so jwt.NewNumericDate never
+// receives an overflowed, non-monotonic time.
+//
+// 8760 == 365 * 24 hours (365 days).
+const MaxSessionExpiryHours = 8760
+
 // MaxRefreshIntervalMinutes caps domain_expiry.refresh_interval_minutes.
 //
 // It serves two purposes:
@@ -108,6 +125,9 @@ func DefaultConfig() *Config {
 		Server: ServerConfig{
 			ExternalURL: "http://localhost:8080",
 			ListenAddr:  ":8080",
+		},
+		Auth: AuthConfig{
+			SessionExpiryHours: 24,
 		},
 		Agent: AgentConfig{
 			HeartbeatTimeoutSeconds: 120,
@@ -212,6 +232,13 @@ func ValidateConfig(cfg *Config) error {
 
 	if cfg.Server.ListenAddr == "" {
 		return errors.New("server.listen_addr is required")
+	}
+
+	if cfg.Auth.SessionExpiryHours <= 0 {
+		return errors.New("auth.session_expiry_hours must be positive")
+	}
+	if cfg.Auth.SessionExpiryHours > MaxSessionExpiryHours {
+		return errors.New("auth.session_expiry_hours must not exceed 8760 (365 days)")
 	}
 
 	if cfg.Agent.HeartbeatTimeoutSeconds <= 0 {

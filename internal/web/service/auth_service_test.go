@@ -327,3 +327,78 @@ func TestAuthLogin_TokenExpiry(t *testing.T) {
 		t.Errorf("expected token expiry ~24h from now, got diff: %v", diff)
 	}
 }
+
+// TestAuthLogin_SessionExpiry_UsesConfiguredHours verifies that the JWT's expiry
+// claim reflects the configured auth.session_expiry_hours, and that it is read
+// fresh from the runtime config on every login (not cached at construction time).
+func TestAuthLogin_SessionExpiry_UsesConfiguredHours(t *testing.T) {
+	userRepo := setupAuthTestDB(t)
+	cfg := &config.Config{Auth: config.AuthConfig{SessionExpiryHours: 2}}
+	runtimeCfg := config.NewRuntimeConfig(cfg)
+	svc := NewAuthService(userRepo, runtimeCfg, testJWTSecret)
+
+	createAuthTestUser(t, userRepo, "admin", "password123", "admin")
+
+	before := time.Now()
+	token, err := svc.Login(context.Background(), "admin", "password123", "", "")
+	if err != nil {
+		t.Fatalf("expected successful login, got error: %v", err)
+	}
+
+	claims, err := svc.ValidateToken(token)
+	if err != nil {
+		t.Fatalf("expected valid token, got error: %v", err)
+	}
+
+	got := claims.ExpiresAt.Time.Sub(before)
+	// Allow a small tolerance for test execution time.
+	if got < 2*time.Hour-time.Minute || got > 2*time.Hour+time.Minute {
+		t.Errorf("expected token expiry ~2h from now, got %v", got)
+	}
+
+	// Update the runtime config and confirm the NEXT login picks up the new value
+	// without recreating the service (config changes take effect live).
+	runtimeCfg.Update(&config.Config{Auth: config.AuthConfig{SessionExpiryHours: 1}})
+
+	before2 := time.Now()
+	token2, err := svc.Login(context.Background(), "admin", "password123", "", "")
+	if err != nil {
+		t.Fatalf("expected successful second login, got error: %v", err)
+	}
+	claims2, err := svc.ValidateToken(token2)
+	if err != nil {
+		t.Fatalf("expected valid second token, got error: %v", err)
+	}
+	got2 := claims2.ExpiresAt.Time.Sub(before2)
+	if got2 < 1*time.Hour-time.Minute || got2 > 1*time.Hour+time.Minute {
+		t.Errorf("expected updated token expiry ~1h from now, got %v", got2)
+	}
+}
+
+// TestAuthLogin_SessionExpiry_FallsBackWhenUnset verifies that a zero-value
+// Auth.SessionExpiryHours (e.g. an older config loaded before this field
+// existed, or a directly-constructed zero-value Config as used by other tests
+// in this file) falls back to the documented 24-hour default rather than
+// producing an immediately-expired or zero-duration token.
+func TestAuthLogin_SessionExpiry_FallsBackWhenUnset(t *testing.T) {
+	userRepo := setupAuthTestDB(t)
+	cfg := &config.Config{} // zero-value: Auth.SessionExpiryHours == 0
+	svc := NewAuthService(userRepo, config.NewRuntimeConfig(cfg), testJWTSecret)
+
+	createAuthTestUser(t, userRepo, "admin", "password123", "admin")
+
+	before := time.Now()
+	token, err := svc.Login(context.Background(), "admin", "password123", "", "")
+	if err != nil {
+		t.Fatalf("expected successful login, got error: %v", err)
+	}
+	claims, err := svc.ValidateToken(token)
+	if err != nil {
+		t.Fatalf("expected valid token, got error: %v", err)
+	}
+
+	got := claims.ExpiresAt.Time.Sub(before)
+	if got < 24*time.Hour-time.Minute || got > 24*time.Hour+time.Minute {
+		t.Errorf("expected fallback token expiry ~24h from now, got %v", got)
+	}
+}

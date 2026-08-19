@@ -38,6 +38,9 @@ const model = ref<Api.SystemConfig>({
     external_url: '',
     listen_addr: '',
   },
+  auth: {
+    session_expiry_hours: 24,
+  },
   agent: {
     heartbeat_timeout_seconds: 120,
     poll_interval_seconds: 30,
@@ -100,6 +103,7 @@ async function fetchConfig() {
     const data = adaptResponse<Api.SystemConfig>(response.data);
     model.value = {
       ...data,
+      auth: data.auth ?? { session_expiry_hours: 24 },
       thirdpart_dns: data.thirdpart_dns ?? { sync_interval_minutes: 360 },
       cleanup: data.cleanup ?? { retention_days: 7, min_keep_count: 1000 },
       domain_expiry: data.domain_expiry ?? {
@@ -183,6 +187,20 @@ onMounted(() => {
         <NFormItem label="监听地址" path="server.listen_addr">
           <NInput v-model:value="model.server.listen_addr" placeholder=":8080" />
         </NFormItem>
+      </NCard>
+
+      <!-- 登录会话 -->
+      <NCard title="登录会话" size="small" class="mb-4">
+        <NFormItem label="Session 有效期（小时）">
+          <NInputNumber
+            v-model:value="model.auth!.session_expiry_hours"
+            :min="1"
+            :max="8760"
+            class="w-full"
+            placeholder="24"
+          />
+        </NFormItem>
+        <span class="text-xs text-gray-500">登录凭证（JWT）的有效期，超过此时长需要重新登录，推荐值 24，最大 8760（365 天）</span>
       </NCard>
 
       <!-- Agent 配置 -->

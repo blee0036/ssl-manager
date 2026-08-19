@@ -202,7 +202,25 @@ func (s *AuthService) IsSessionValid(userID string, issuedAt time.Time) bool {
 	return issuedAt.After(invalidatedAt)
 }
 
-// generateToken creates a signed JWT token with the given claims.
+// sessionExpiryDuration returns the effective session (JWT) validity duration
+// from the current runtime config, falling back to 24 hours when runtimeCfg is
+// nil or the configured value is non-positive (defense-in-depth; ValidateConfig
+// already rejects non-positive/out-of-range values before a config is saved or
+// loaded, so this fallback should only ever be exercised by a nil runtimeCfg,
+// e.g. in tests that construct AuthService directly).
+func (s *AuthService) sessionExpiryDuration() time.Duration {
+	if s.runtimeCfg != nil {
+		if hours := s.runtimeCfg.Get().Auth.SessionExpiryHours; hours > 0 {
+			return time.Duration(hours) * time.Hour
+		}
+	}
+	return 24 * time.Hour
+}
+
+// generateToken creates a signed JWT token with the given claims. The token's
+// expiry is driven by the current auth.session_expiry_hours config (default 24
+// hours), read fresh on every call so a config change takes effect for the next
+// login without restarting the process.
 func (s *AuthService) generateToken(userID, username, role string) (string, error) {
 	now := time.Now()
 	claims := &TokenClaims{
@@ -211,7 +229,7 @@ func (s *AuthService) generateToken(userID, username, role string) (string, erro
 		Role:     role,
 		RegisteredClaims: jwt.RegisteredClaims{
 			IssuedAt:  jwt.NewNumericDate(now),
-			ExpiresAt: jwt.NewNumericDate(now.Add(24 * time.Hour)),
+			ExpiresAt: jwt.NewNumericDate(now.Add(s.sessionExpiryDuration())),
 		},
 	}
 
