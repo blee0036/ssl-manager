@@ -208,7 +208,10 @@ func (h *RootDomainHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 }
 
 // Update handles PUT /api/root-domains/{id} - update a root domain's
-// monitor_enabled / alert_ignored flags.
+// monitor_enabled / alert_ignored flags, and/or manually set or clear its
+// registration expiry_date (for domains whose registry is structurally
+// unqueryable via WHOIS/RDAP; see model.UpdateRootDomainInput.ExpiryDate).
+// An invalid expiry_date string is a validation error mapped to HTTP 400.
 func (h *RootDomainHandler) Update(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {

@@ -62,10 +62,18 @@ export async function importRootDomains(data: { api_token?: string; config_id?: 
   return res.data.data!;
 }
 
-/** 更新根域名（监控开关 / 忽略告警） — PUT /api/root-domains/{id} */
+/**
+ * 更新根域名（监控开关 / 忽略告警 / 手动到期日覆盖） — PUT /api/root-domains/{id}
+ *
+ * expiry_date 用于手动设置到期日（RFC3339 字符串），供 WHOIS/RDAP 均结构性无法
+ * 查询的域名使用（如部分 .eu / .uy / 三级公共后缀域名）：
+ *   - 非空字符串：设置手动到期日，后端将 expiry_source 置为 "manual"，
+ *     后续周期刷新将跳过该域名的 WHOIS 查询。
+ *   - 空字符串 ""：清除手动覆盖，恢复 "whois" 来源与周期性 WHOIS 查询。
+ */
 export async function updateRootDomain(
   id: string,
-  data: Partial<{ monitor_enabled: boolean; alert_ignored: boolean }>
+  data: Partial<{ monitor_enabled: boolean; alert_ignored: boolean; expiry_date: string }>
 ): Promise<Api.RootDomain> {
   const res = await request.put<Api.Response<Api.RootDomain>>(`/api/root-domains/${id}`, data, { skipErrorNotify: true });
   return res.data.data!;

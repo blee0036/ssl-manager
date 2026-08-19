@@ -406,11 +406,31 @@ func (s *DomainExpiryService) ReconcileCloudflareZones(ctx context.Context, zone
 // Only genuine infrastructure errors bubble up as a non-nil Go error: the id not
 // existing (GetByID -> sql.ErrNoRows, wrapped so handlers map it to 404) and DB
 // failures from GetByID / SaveExpiryResult.
+//
+// Manual override short-circuit: when the record's ExpirySource is "manual" (set
+// via Update), RefreshOne skips the WHOIS/RDAP query entirely, re-evaluates
+// alerts against the manually-set expiry_date, and returns immediately. This
+// covers registries that are structurally unqueryable via WHOIS/RDAP (see
+// requirements.md "已知限制与后续增强").
 func (s *DomainExpiryService) RefreshOne(ctx context.Context, id string) (*model.RootDomain, error) {
 	rd, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		// Wraps sql.ErrNoRows on not-found so the handler can map it to 404.
 		return nil, fmt.Errorf("failed to get root domain: %w", err)
+	}
+
+	// Manual expiry override (see "已知限制与后续增强" in requirements.md): this
+	// domain's registrar is structurally unqueryable via WHOIS/RDAP (e.g. some
+	// .eu / .uy / third-level ccTLD delegations), so an operator has set
+	// expiry_date by hand via Update. Skip the WHOIS/RDAP query entirely — both
+	// to avoid a pointless network round-trip that can only fail, and to avoid
+	// clobbering last_status="manual" with a failed check. The expiry date is
+	// still re-evaluated against the current time/threshold on every call (via
+	// evaluateAlerts below), so alerts stay correct as the countdown progresses.
+	if rd.ExpirySource == "manual" {
+		computeDaysRemaining(rd)
+		s.evaluateAlerts(ctx, rd)
+		return rd, nil
 	}
 
 	// Serialize refreshes of the same registrable domain (see doc above).
@@ -559,6 +579,33 @@ func (s *DomainExpiryService) Update(ctx context.Context, id string, in model.Up
 		updates["alert_ignored"] = *in.AlertIgnored
 	}
 
+	// Manual expiry override (see requirements.md "已知限制与后续增强"): lets an
+	// operator set/clear expiry_date by hand for domains whose registry is
+	// structurally unqueryable via WHOIS/RDAP.
+	//   - non-empty string: parse as the new expiry_date, switch expiry_source to
+	//     "manual", set last_status="manual" and clear last_error. The periodic
+	//     refresh (RefreshAll -> RefreshOne) will then skip the WHOIS/RDAP query
+	//     for this domain entirely.
+	//   - empty string (""): clear the override, switching expiry_source back to
+	//     "whois" and resetting last_status to "" (pending re-check); expiry_date
+	//     itself is left untouched until the next successful WHOIS/RDAP query
+	//     overwrites it. Restores normal periodic WHOIS querying.
+	if in.ExpiryDate != nil {
+		if strings.TrimSpace(*in.ExpiryDate) == "" {
+			updates["expiry_source"] = "whois"
+			updates["last_status"] = ""
+		} else {
+			parsed, perr := time.Parse(time.RFC3339, strings.TrimSpace(*in.ExpiryDate))
+			if perr != nil {
+				return nil, fmt.Errorf("%w: invalid expiry_date: %v", ErrValidation, perr)
+			}
+			updates["expiry_date"] = parsed.UTC().Format(time.RFC3339)
+			updates["expiry_source"] = "manual"
+			updates["last_status"] = "manual"
+			updates["last_error"] = ""
+		}
+	}
+
 	// Requirement 5.6: when alert_ignored is set to true, suppress active alerts
 	// first. Order: suppress → persist. If suppress fails, alert_ignored is not
 	// persisted (mirrors DomainMonitorService.Update).
@@ -578,7 +625,19 @@ func (s *DomainExpiryService) Update(ctx context.Context, id string, in model.Up
 	}
 
 	// Re-read via GetByID (which sets DaysRemaining) and return.
-	return s.GetByID(ctx, id)
+	rd, err := s.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	// A manual expiry_date was just set: re-evaluate alerts immediately so the
+	// new date's threshold/critical classification takes effect right away,
+	// mirroring RefreshOne's on-success evaluation (requirement 5).
+	if in.ExpiryDate != nil && strings.TrimSpace(*in.ExpiryDate) != "" {
+		s.evaluateAlerts(ctx, rd)
+	}
+
+	return rd, nil
 }
 
 // Delete removes a root domain and its inlined registration-expiry data

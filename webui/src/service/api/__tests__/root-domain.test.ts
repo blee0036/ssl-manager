@@ -77,6 +77,7 @@ const sampleRootDomain: Api.RootDomain = {
   source: 'manual',
   registrable_domain: 'example.com',
   expiry_date: '2025-09-14T00:00:00Z',
+  expiry_source: 'whois',
   days_remaining: 42,
   last_checked_at: '2025-08-01T03:00:00Z',
   last_status: 'success',
@@ -218,6 +219,41 @@ describe('root-domain API service', () => {
       expect(req.put).toHaveBeenCalledWith(
         '/api/root-domains/abc-123-xyz',
         { alert_ignored: true },
+        { skipErrorNotify: true },
+      );
+    });
+
+    it('calls PUT /api/root-domains/{id} with a non-empty expiry_date to set a manual override', async () => {
+      const updated: Api.RootDomain = {
+        ...sampleRootDomain,
+        expiry_date: '2026-01-01T00:00:00.000Z',
+        expiry_source: 'manual',
+        last_status: 'manual',
+      };
+      req.put.mockResolvedValue(ok(updated));
+
+      const res = await updateRootDomain('rd-1', { expiry_date: '2026-01-01T00:00:00.000Z' });
+
+      expect(req.put).toHaveBeenCalledWith(
+        '/api/root-domains/rd-1',
+        { expiry_date: '2026-01-01T00:00:00.000Z' },
+        { skipErrorNotify: true },
+      );
+      expect(res).toEqual(updated);
+    });
+
+    it('calls PUT /api/root-domains/{id} with an empty expiry_date string to clear a manual override', async () => {
+      const cleared: Api.RootDomain = { ...sampleRootDomain, expiry_source: 'whois', last_status: '' };
+      req.put.mockResolvedValue(ok(cleared));
+
+      await updateRootDomain('rd-1', { expiry_date: '' });
+
+      // An empty string is distinct from omitting the field entirely: it must be
+      // sent verbatim (not stripped), since the backend uses it to distinguish
+      // "clear override" from "no change".
+      expect(req.put).toHaveBeenCalledWith(
+        '/api/root-domains/rd-1',
+        { expiry_date: '' },
         { skipErrorNotify: true },
       );
     });

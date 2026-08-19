@@ -30,6 +30,9 @@ func (db *DB) Migrate() error {
 	if err := db.migrateAddColumnIfNotExists("thirdpart_dns_sync_logs", "removed_domains", "TEXT DEFAULT '[]'"); err != nil {
 		return fmt.Errorf("migrate removed_domains column: %w", err)
 	}
+	if err := db.migrateAddColumnIfNotExists("root_domains", "expiry_source", "TEXT NOT NULL DEFAULT 'whois'"); err != nil {
+		return fmt.Errorf("migrate expiry_source column: %w", err)
+	}
 
 	// init_state 表迁移
 	initStateStatements := []string{
@@ -73,6 +76,8 @@ func (db *DB) Migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_domains_source_dnsid ON domains(source, thirdpart_dns_id)`,
 		// domains: used by ProbeAll filter
 		`CREATE INDEX IF NOT EXISTS idx_domains_monitor_enabled ON domains(monitor_enabled)`,
+		// domains: 规范化（大小写/尾点）唯一约束，避免重复主机名（CreateIfNotExists 去重原语依赖此索引）
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_domains_name_normalized ON domains(LOWER(RTRIM(name, '.')))`,
 		// machine_certificates: used by GetByMachineID, CountByCertificateIDs
 		`CREATE INDEX IF NOT EXISTS idx_mc_machine_id ON machine_certificates(machine_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_mc_certificate_id ON machine_certificates(certificate_id)`,
@@ -312,6 +317,7 @@ var migrationStatements = []string{
 		source TEXT NOT NULL DEFAULT 'manual' CHECK(source IN ('manual', 'cloudflare')),
 		registrable_domain TEXT NOT NULL,
 		expiry_date TEXT,
+		expiry_source TEXT NOT NULL DEFAULT 'whois' CHECK(expiry_source IN ('whois', 'manual')),
 		last_checked_at TEXT,
 		last_status TEXT NOT NULL DEFAULT '',
 		last_error TEXT NOT NULL DEFAULT '',

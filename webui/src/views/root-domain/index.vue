@@ -6,6 +6,7 @@ import { RefreshOutline } from '@vicons/ionicons5';
 import RootDomainTable from './components/RootDomainTable.vue';
 import CreateDialog from './components/CreateDialog.vue';
 import ImportDialog from './components/ImportDialog.vue';
+import ManualExpiryDialog from './components/ManualExpiryDialog.vue';
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue';
 import EmptyState from '@/components/common/EmptyState.vue';
 import { useTable } from '@/hooks/useTable';
@@ -137,6 +138,13 @@ function clearFilters() {
 
 const showCreateDialog = ref(false);
 const showImportDialog = ref(false);
+const showManualExpiryDialog = ref(false);
+const manualExpiryRow = ref<Api.RootDomain | null>(null);
+
+function handleSetManualExpiry(row: Api.RootDomain) {
+  manualExpiryRow.value = row;
+  showManualExpiryDialog.value = true;
+}
 
 // ============================================================
 // Delete confirm
@@ -295,6 +303,7 @@ async function handleToggleIgnore(row: Api.RootDomain) {
         @refresh="handleRefresh"
         @delete="handleDeleteClick"
         @toggle-ignore="handleToggleIgnore"
+        @set-manual-expiry="handleSetManualExpiry"
       />
 
       <!-- 分页 -->
@@ -323,6 +332,13 @@ async function handleToggleIgnore(row: Api.RootDomain) {
     <!-- 从 Cloudflare 导入对话框 -->
     <ImportDialog
       v-model:show="showImportDialog"
+      @success="refresh"
+    />
+
+    <!-- 手动设置到期日对话框 -->
+    <ManualExpiryDialog
+      v-model:show="showManualExpiryDialog"
+      :row="manualExpiryRow"
       @success="refresh"
     />
 

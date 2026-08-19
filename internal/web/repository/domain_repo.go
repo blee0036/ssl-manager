@@ -94,6 +94,84 @@ func (r *DomainRepository) Create(ctx context.Context, domain *model.Domain) err
 	return nil
 }
 
+// CreateIfNotExists atomically inserts a new domain unless one with the same
+// normalized name (LOWER+RTRIM '.') already exists, reporting whether a NEW row
+// was created.
+//
+// It is the race-safe, idempotent dedup primitive for the Cloudflare apex
+// auto-sync path (cloudflare-domain-auto-sync). A plain "GetByName then Create"
+// sequence has a check-then-act race: two concurrent callers (e.g. two dnsWorker
+// ticks, or the auto-sync racing a manual create) can both miss, then one insert
+// wins and the other trips the unique index on LOWER(RTRIM(name, '.')). This
+// method instead performs a single
+// `INSERT ... ON CONFLICT(LOWER(RTRIM(name, '.'))) DO NOTHING`, so a conflict is
+// NOT an error — it simply means a domain with the same normalized name already
+// exists (regardless of Source: "manual" or "cloudflare"). In that case the
+// existing row is left untouched and the method returns (created=false,
+// err=nil). Only a genuine DB failure returns a non-nil error.
+//
+// Field handling mirrors Create exactly: a uuid is generated when ID is empty,
+// created_at/updated_at are stamped with UTC now, Source defaults to "manual",
+// the two bool flags are stored as INTEGER, and the optional linked-ID fields as
+// nullable strings.
+//
+// Mirrors RootDomainRepository.CreateIfNotExists. NOT used by the existing
+// manual-create (DomainMonitorService.Create → Create) or DNS-record-sync
+// (ThirdpartDNSService.syncToLocalDomains) paths, which keep their current
+// Create() call sites unchanged.
+func (r *DomainRepository) CreateIfNotExists(ctx context.Context, domain *model.Domain) (bool, error) {
+	if domain.ID == "" {
+		domain.ID = uuid.New().String()
+	}
+
+	now := time.Now().UTC()
+	domain.CreatedAt = now
+	domain.UpdatedAt = now
+
+	if domain.Source == "" {
+		domain.Source = "manual"
+	}
+
+	query := `INSERT INTO domains (
+		id, name, source, thirdpart_dns_id, dns_record_id, dns_record_type, dns_record_value,
+		monitor_port, linked_machine_id, linked_certificate_id,
+		linked_machine_certificate_id, monitor_enabled, alert_ignored, created_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(LOWER(RTRIM(name, '.'))) DO NOTHING`
+
+	result, err := r.db.ExecContext(ctx, query,
+		domain.ID,
+		domain.Name,
+		domain.Source,
+		domain.ThirdpartDNSID,
+		domain.DNSRecordID,
+		domain.DNSRecordType,
+		domain.DNSRecordValue,
+		domain.MonitorPort,
+		nullableString(domain.LinkedMachineID),
+		nullableString(domain.LinkedCertificateID),
+		nullableString(domain.LinkedMachineCertificateID),
+		boolToInt(domain.MonitorEnabled),
+		boolToInt(domain.AlertIgnored),
+		domain.CreatedAt.Format(time.RFC3339),
+		domain.UpdatedAt.Format(time.RFC3339),
+	)
+	if err != nil {
+		return false, fmt.Errorf("failed to insert domain: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	// rowsAffected == 0 means the ON CONFLICT(LOWER(RTRIM(name, '.'))) DO NOTHING
+	// clause skipped the insert because a domain with the same normalized name
+	// already existed. That is the idempotent "already exists" outcome
+	// (created=false), not an error.
+	return rowsAffected > 0, nil
+}
+
 // GetByID retrieves a domain by ID.
 func (r *DomainRepository) GetByID(ctx context.Context, id string) (*model.Domain, error) {
 	query := `SELECT id, name, source, thirdpart_dns_id, dns_record_id, dns_record_type, dns_record_value,

@@ -168,3 +168,41 @@ func TestMigrate_RepeatedCallsOnExistingDB(t *testing.T) {
 		t.Fatal("database file not created")
 	}
 }
+
+func TestMigrate_DomainsNameNormalizedUniqueIndex(t *testing.T) {
+	db := openTestDB(t)
+	if err := db.Migrate(); err != nil {
+		t.Fatalf("Migrate failed: %v", err)
+	}
+
+	// First insert succeeds.
+	_, err := db.Exec(`INSERT INTO domains (id, name, source, monitor_port, monitor_enabled, alert_ignored, created_at, updated_at)
+		VALUES ('domain-1', 'example.com', 'manual', 443, 1, 0, '2024-01-01', '2024-01-01')`)
+	if err != nil {
+		t.Fatalf("first insert failed: %v", err)
+	}
+
+	// Second insert with the exact same name must fail: idx_domains_name_normalized
+	// is a UNIQUE index on LOWER(RTRIM(name, '.')), and this raw INSERT has no
+	// ON CONFLICT clause, so a uniqueness violation must surface as an error.
+	_, err = db.Exec(`INSERT INTO domains (id, name, source, monitor_port, monitor_enabled, alert_ignored, created_at, updated_at)
+		VALUES ('domain-2', 'example.com', 'manual', 443, 1, 0, '2024-01-01', '2024-01-01')`)
+	if err == nil {
+		t.Fatal("expected duplicate name insert to fail due to unique index, got nil error")
+	}
+
+	// A name that differs only by case and a trailing dot normalizes to the same
+	// value (LOWER(RTRIM('Example.COM.', '.')) == 'example.com') and must also conflict.
+	_, err = db.Exec(`INSERT INTO domains (id, name, source, monitor_port, monitor_enabled, alert_ignored, created_at, updated_at)
+		VALUES ('domain-3', 'Example.COM.', 'manual', 443, 1, 0, '2024-01-01', '2024-01-01')`)
+	if err == nil {
+		t.Fatal("expected case/trailing-dot normalized duplicate insert to fail due to unique index, got nil error")
+	}
+
+	// A genuinely different domain name must not be blocked by the index.
+	_, err = db.Exec(`INSERT INTO domains (id, name, source, monitor_port, monitor_enabled, alert_ignored, created_at, updated_at)
+		VALUES ('domain-4', 'other.com', 'manual', 443, 1, 0, '2024-01-01', '2024-01-01')`)
+	if err != nil {
+		t.Fatalf("insert of a genuinely different domain name should succeed, got error: %v", err)
+	}
+}

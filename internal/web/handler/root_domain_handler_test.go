@@ -68,6 +68,7 @@ func rdunitSetup(t *testing.T) (*repository.RootDomainRepository, chi.Router) {
 		source TEXT NOT NULL DEFAULT 'manual' CHECK(source IN ('manual', 'cloudflare')),
 		registrable_domain TEXT NOT NULL,
 		expiry_date TEXT,
+		expiry_source TEXT NOT NULL DEFAULT 'whois' CHECK(expiry_source IN ('whois', 'manual')),
 		last_checked_at TEXT,
 		last_status TEXT NOT NULL DEFAULT '',
 		last_error TEXT NOT NULL DEFAULT '',

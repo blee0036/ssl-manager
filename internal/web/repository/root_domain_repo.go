@@ -14,7 +14,7 @@ import (
 // rootDomainColumns is the canonical column list for root_domains SELECTs.
 // days_remaining is intentionally NOT included: it is a non-persistent field
 // computed at read time by the service layer.
-const rootDomainColumns = `id, name, source, registrable_domain, expiry_date, last_checked_at,
+const rootDomainColumns = `id, name, source, registrable_domain, expiry_date, expiry_source, last_checked_at,
 	last_status, last_error, monitor_enabled, alert_ignored, created_at, updated_at`
 
 // rootDomainSortByWhitelist maps allowed sort_by values to safe SQL expressions.
@@ -54,11 +54,14 @@ func (r *RootDomainRepository) Create(ctx context.Context, rd *model.RootDomain)
 	if rd.Source == "" {
 		rd.Source = "manual"
 	}
+	if rd.ExpirySource == "" {
+		rd.ExpirySource = "whois"
+	}
 
 	query := `INSERT INTO root_domains (
-		id, name, source, registrable_domain, expiry_date, last_checked_at,
+		id, name, source, registrable_domain, expiry_date, expiry_source, last_checked_at,
 		last_status, last_error, monitor_enabled, alert_ignored, created_at, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	_, err := r.db.ExecContext(ctx, query,
 		rd.ID,
@@ -66,6 +69,7 @@ func (r *RootDomainRepository) Create(ctx context.Context, rd *model.RootDomain)
 		rd.Source,
 		rd.RegistrableDomain,
 		nullableTimeRFC3339(rd.ExpiryDate),
+		rd.ExpirySource,
 		nullableTimeRFC3339(rd.LastCheckedAt),
 		rd.LastStatus,
 		rd.LastError,
@@ -111,11 +115,14 @@ func (r *RootDomainRepository) CreateIfNotExists(ctx context.Context, rd *model.
 	if rd.Source == "" {
 		rd.Source = "manual"
 	}
+	if rd.ExpirySource == "" {
+		rd.ExpirySource = "whois"
+	}
 
 	query := `INSERT INTO root_domains (
-		id, name, source, registrable_domain, expiry_date, last_checked_at,
+		id, name, source, registrable_domain, expiry_date, expiry_source, last_checked_at,
 		last_status, last_error, monitor_enabled, alert_ignored, created_at, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(registrable_domain) DO NOTHING`
 
 	result, err := r.db.ExecContext(ctx, query,
@@ -124,6 +131,7 @@ func (r *RootDomainRepository) CreateIfNotExists(ctx context.Context, rd *model.
 		rd.Source,
 		rd.RegistrableDomain,
 		nullableTimeRFC3339(rd.ExpiryDate),
+		rd.ExpirySource,
 		nullableTimeRFC3339(rd.LastCheckedAt),
 		rd.LastStatus,
 		rd.LastError,
@@ -385,6 +393,7 @@ func (r *RootDomainRepository) scanRootDomain(row *sql.Row) (*model.RootDomain, 
 		&rd.Source,
 		&rd.RegistrableDomain,
 		&expiryDate,
+		&rd.ExpirySource,
 		&lastCheckedAt,
 		&rd.LastStatus,
 		&rd.LastError,
@@ -416,6 +425,7 @@ func (r *RootDomainRepository) scanRootDomainFromRows(rows *sql.Rows) (*model.Ro
 		&rd.Source,
 		&rd.RegistrableDomain,
 		&expiryDate,
+		&rd.ExpirySource,
 		&lastCheckedAt,
 		&rd.LastStatus,
 		&rd.LastError,

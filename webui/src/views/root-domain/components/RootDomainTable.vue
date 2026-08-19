@@ -27,6 +27,7 @@ const emit = defineEmits<{
   (e: 'delete', row: Api.RootDomain): void;
   (e: 'refresh', row: Api.RootDomain): void;
   (e: 'toggle-ignore', row: Api.RootDomain): void;
+  (e: 'set-manual-expiry', row: Api.RootDomain): void;
   (e: 'sort-change', sortBy: string, sortOrder: string): void;
 }>();
 
@@ -89,13 +90,23 @@ const columns = computed<DataTableColumns<Api.RootDomain>>(() => {
   {
     title: '到期日',
     key: 'expiry_date',
-    width: 130,
+    width: 160,
     sorter: true,
     render(row) {
       if (!row.expiry_date) {
         return h(NTag, { size: 'small', type: 'default' }, () => '未知');
       }
-      return formatDate(row.expiry_date);
+      const parts = [h('span', null, formatDate(row.expiry_date))];
+      if (row.expiry_source === 'manual') {
+        parts.push(
+          h(NTooltip, null, {
+            trigger: () =>
+              h(NTag, { size: 'tiny', type: 'info', bordered: false, style: 'margin-left: 4px' }, () => '手动'),
+            default: () => '该到期日由人工手动设置，已跳过自动 WHOIS 查询',
+          })
+        );
+      }
+      return h('div', { style: 'display: flex; align-items: center' }, parts);
     },
   },
   {
@@ -130,6 +141,9 @@ const columns = computed<DataTableColumns<Api.RootDomain>>(() => {
       if (row.last_status === 'success') {
         return h(NTag, { size: 'small', type: 'success' }, () => '成功');
       }
+      if (row.last_status === 'manual') {
+        return h(NTag, { size: 'small', type: 'info' }, () => '人工设置');
+      }
       if (row.last_status === 'failed') {
         const tag = h(NTag, { size: 'small', type: 'error' }, () => '失败');
         // 失败时以 tooltip 展示 last_error
@@ -154,7 +168,7 @@ const columns = computed<DataTableColumns<Api.RootDomain>>(() => {
   {
     title: '操作',
     key: 'actions',
-    width: 200,
+    width: 280,
     fixed: 'right',
     render(row) {
       if (!canWrite()) return null;
@@ -180,6 +194,17 @@ const columns = computed<DataTableColumns<Api.RootDomain>>(() => {
                 onClick: () => emit('refresh', row),
               },
               { default: () => '刷新' }
+            ),
+            h(
+              NButton,
+              {
+                size: 'small',
+                type: 'default',
+                quaternary: true,
+                disabled: isRowBusy,
+                onClick: () => emit('set-manual-expiry', row),
+              },
+              { default: () => '手动设置' }
             ),
             h(
               NButton,
@@ -234,7 +259,7 @@ function handleSorterChange(sorter: DataTableSortState | DataTableSortState[] | 
     :data="data"
     :loading="loading"
     :row-key="(row: Api.RootDomain) => row.id"
-    :scroll-x="1250"
+    :scroll-x="1400"
     :bordered="false"
     :sort-state="sortState ?? undefined"
     remote

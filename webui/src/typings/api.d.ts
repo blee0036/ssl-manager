@@ -180,6 +180,8 @@ declare namespace Api {
     source: string;
     registrable_domain: string;
     expiry_date: string | null;
+    /** "whois"（默认，自动查询） | "manual"（人工手动设置，跳过周期刷新） */
+    expiry_source: string;
     days_remaining: number | null;
     last_checked_at: string | null;
     last_status: string;

@@ -183,10 +183,20 @@ type CreateRootDomainInput struct {
 	Name string `json:"name"`
 }
 
-// UpdateRootDomainInput 更新根域名（仅监控开关与忽略告警）
+// UpdateRootDomainInput 更新根域名（监控开关 / 忽略告警 / 手动到期日覆盖）
 type UpdateRootDomainInput struct {
 	MonitorEnabled *bool `json:"monitor_enabled,omitempty"`
 	AlertIgnored   *bool `json:"alert_ignored,omitempty"`
+	// ExpiryDate，当非 nil 时用于手动覆盖注册到期日（RFC3339 字符串），供 WHOIS/RDAP
+	// 均结构性无法查询的域名使用（如部分 .eu / .uy / 三级公共后缀域名）：
+	//   - 非空字符串：解析为到期日并写入 expiry_date，同时将 expiry_source 置为
+	//     "manual"、last_status 置为 "manual"（清空 last_error），使该到期日立即
+	//     参与既有的阈值/告警评估（需求 5），且后续周期刷新（RefreshAll）将跳过
+	//     该域名的 WHOIS 查询。
+	//   - 空字符串（""，区别于未提供/nil）：清除手动覆盖，将 expiry_source 改回
+	//     "whois"、last_status 重置为 ""（待重新核实），恢复周期性 WHOIS 查询；
+	//     expiry_date 本身保持不变，直到下一次成功的 WHOIS/RDAP 查询覆盖它。
+	ExpiryDate *string `json:"expiry_date,omitempty"`
 }
 
 // ImportRootDomainsInput 从 Cloudflare 导入根域名输入（api_token 或 config_id 二选一）

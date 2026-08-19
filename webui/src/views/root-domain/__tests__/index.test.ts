@@ -46,6 +46,7 @@ function makeRootDomain(overrides: Partial<Api.RootDomain> = {}): Api.RootDomain
     source: 'manual',
     registrable_domain: 'example.com',
     expiry_date: '2025-09-14T00:00:00Z',
+    expiry_source: 'whois',
     days_remaining: 42,
     last_checked_at: '2025-08-01T03:00:00Z',
     last_status: 'success',
