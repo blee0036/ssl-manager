@@ -177,6 +177,7 @@ func run() error {
 	// Must be set before schedulerService.Start so the periodic expiry refresh
 	// ticker and the DNS-sync reconcile step have the service available.
 	schedulerService.SetDomainExpiryService(domainExpiryService)
+	schedulerService.SetDomainRepo(domainRepo)
 
 	// Create auth service adapter for middleware
 	authAdapter := &authServiceAdapter{

@@ -73,6 +73,14 @@ type SchedulerService struct {
 	// Domain expiry monitoring (WHOIS registration expiry)
 	domainExpiryService *DomainExpiryService
 
+	// Cloudflare apex auto-sync (cloudflare-domain-auto-sync spec): direct
+	// access to the domains table for reconcileApexDomainMonitorsFromCloudflare.
+	// Distinct from domainMonitorService — this bypasses DomainMonitorService.Create
+	// (which forces Source="manual" and has no atomic dedup) the same way
+	// ThirdpartDNSService.syncToLocalDomains already bypasses it for its own
+	// Cloudflare-sourced writes.
+	domainRepo *repository.DomainRepository
+
 	// Scheduler control
 	mu       sync.Mutex
 	running  bool
@@ -129,6 +137,18 @@ func (s *SchedulerService) SetThirdpartDNSService(svc *ThirdpartDNSService, repo
 // SetDomainExpiryService sets the domain expiry service for periodic WHOIS refresh.
 func (s *SchedulerService) SetDomainExpiryService(svc *DomainExpiryService) {
 	s.domainExpiryService = svc
+}
+
+// SetDomainRepo wires the domain repository for the Cloudflare apex auto-sync
+// path (cloudflare-domain-auto-sync requirement 1/2). Distinct from
+// domainMonitorService: this repository access is intentionally direct
+// (bypassing DomainMonitorService.Create, which enforces Source="manual" and
+// has no atomic dedup), mirroring how ThirdpartDNSService.syncToLocalDomains
+// already bypasses DomainMonitorService for its own Cloudflare-sourced writes.
+// Not calling this (leaving domainRepo nil) safely disables
+// reconcileApexDomainMonitorsFromCloudflare (nil-guarded).
+func (s *SchedulerService) SetDomainRepo(repo *repository.DomainRepository) {
+	s.domainRepo = repo
 }
 
 // Start begins the scheduler's periodic execution loop.
@@ -401,10 +421,25 @@ func (s *SchedulerService) dnsWorker(ctx context.Context, stopCh <-chan struct{}
 			return
 		case <-trigger:
 			s.runDNSSyncAll(ctx)
-			// Reconcile cloudflare-sourced root domains on the same DNS-sync
-			// cadence (requirement 2.4). Runs serially after runDNSSyncAll within
-			// this single-threaded worker, so it is safe.
-			s.reconcileRootDomainsFromCloudflare(ctx)
+			// Collect the Cloudflare zone names for this cycle exactly once and
+			// hand the SAME slice to both reconcile paths below, so the
+			// registration-expiry side (root_domains) and the TLS/SSL apex-monitor
+			// side (domains) never diverge on which zones were "seen" this round
+			// (requirement 1.3). Each still runs serially after runDNSSyncAll
+			// within this single-threaded worker, so it is safe.
+			zoneNames := s.collectCloudflareZoneNames(ctx)
+			if s.domainExpiryService != nil {
+				// Reconcile cloudflare-sourced root domains on the same DNS-sync
+				// cadence (requirement 2.4); error isolation preserved exactly as
+				// in the former reconcileRootDomainsFromCloudflare wrapper.
+				if err := s.domainExpiryService.ReconcileCloudflareZones(ctx, zoneNames); err != nil {
+					log.Printf("[Scheduler] reconcile root domains error: %v", err)
+				}
+			}
+			// Reconcile cloudflare-sourced apex Domain monitors (TLS/SSL) on the
+			// same batch of zoneNames (requirement 1.1, 1.2, 1.3). Nil-guards
+			// domainRepo internally (requirement 4.3).
+			s.reconcileApexDomainMonitorsFromCloudflare(ctx, zoneNames)
 		}
 	}
 }
@@ -441,27 +476,28 @@ func (s *SchedulerService) runDNSSyncAll(ctx context.Context) {
 	}
 }
 
-// reconcileRootDomainsFromCloudflare reconciles the root-domain set against the
-// current Cloudflare zones, driven by the existing third-party DNS sync cadence
-// (requirement 2.4). It runs inside the single-threaded dnsWorker right after
-// runDNSSyncAll, so it executes serially and is safe.
+// collectCloudflareZoneNames scans zones for every enabled thirdpart DNS config
+// and returns the zone names collected across all configs, in config-then-zone
+// iteration order. Names are NOT de-duplicated here — this mirrors the original
+// reconcileRootDomainsFromCloudflare collection loop exactly: if two enabled
+// configs share a zone, or ScanZones itself returns duplicate entries, the
+// returned slice may contain the same name more than once. Callers
+// (ReconcileCloudflareZones and the apex auto-sync path's CreateIfNotExists) both
+// tolerate duplicate names safely via their own idempotent/atomic dedup
+// primitives, so no additional dedup is performed here.
 //
-// For each enabled DNS config it re-scans the zones (names only, no WHOIS) and
-// hands the collected zone names to ReconcileCloudflareZones, which additively
-// registers newly appearing root domains as source="cloudflare" and keeps the
-// existing ones (requirement 2.5: cloudflare root domains that no longer appear
-// are retained by default — never deleted or disabled here).
-//
-// Robustness: the required dependencies are nil-guarded up front, and a single
-// config's ScanZones failure is skipped (continue) so it does not stop the others.
-func (s *SchedulerService) reconcileRootDomainsFromCloudflare(ctx context.Context) {
-	if s.domainExpiryService == nil || s.thirdpartDNSService == nil || s.dnsRepo == nil {
-		return
+// A single config's ScanZones failure is logged and skipped (continue), so it
+// does not abort collection for the remaining configs (requirement 1.4: error
+// isolation). Required dependencies (thirdpartDNSService, dnsRepo) are
+// nil-guarded up front; returns nil if the DNS integration is not wired up.
+func (s *SchedulerService) collectCloudflareZoneNames(ctx context.Context) []string {
+	if s.thirdpartDNSService == nil || s.dnsRepo == nil {
+		return nil
 	}
 	configs, err := s.dnsRepo.List(ctx)
 	if err != nil {
 		log.Printf("[Scheduler] Failed to list DNS configs for root-domain reconcile: %v", err)
-		return
+		return nil
 	}
 	var zoneNames []string
 	for _, cfg := range configs {
@@ -478,8 +514,88 @@ func (s *SchedulerService) reconcileRootDomainsFromCloudflare(ctx context.Contex
 			zoneNames = append(zoneNames, z.Name)
 		}
 	}
+	return zoneNames
+}
+
+// reconcileRootDomainsFromCloudflare reconciles the root-domain set against the
+// current Cloudflare zones, driven by the existing third-party DNS sync cadence
+// (requirement 2.4). It runs inside the single-threaded dnsWorker right after
+// runDNSSyncAll, so it executes serially and is safe.
+//
+// It delegates zone collection to collectCloudflareZoneNames (names only, no
+// WHOIS) and hands the collected zone names to ReconcileCloudflareZones, which
+// additively registers newly appearing root domains as source="cloudflare" and
+// keeps the existing ones (requirement 2.5: cloudflare root domains that no
+// longer appear are retained by default — never deleted or disabled here).
+//
+// Robustness: collectCloudflareZoneNames nil-guards thirdpartDNSService/dnsRepo
+// and isolates a single config's ScanZones failure (continue) so it does not
+// stop the others; this function only additionally guards domainExpiryService,
+// preserving the original combined nil-guard behavior.
+func (s *SchedulerService) reconcileRootDomainsFromCloudflare(ctx context.Context) {
+	if s.domainExpiryService == nil {
+		return
+	}
+	zoneNames := s.collectCloudflareZoneNames(ctx)
 	if err := s.domainExpiryService.ReconcileCloudflareZones(ctx, zoneNames); err != nil {
 		log.Printf("[Scheduler] reconcile root domains error: %v", err)
+	}
+}
+
+// defaultDomainMonitorPort returns the configured default TLS/SSL monitor port,
+// falling back to 443 when unset. Mirrors DomainMonitorService.defaultPort /
+// ThirdpartDNSService.defaultPort exactly (same config field, same fallback).
+func (s *SchedulerService) defaultDomainMonitorPort() int {
+	if s.runtimeCfg != nil {
+		port := s.runtimeCfg.Get().DomainMonitor.DefaultPort
+		if port > 0 {
+			return port
+		}
+	}
+	return 443
+}
+
+// reconcileApexDomainMonitorsFromCloudflare additively registers each zone name
+// in zoneNames as a source="cloudflare" apex Domain monitor (TLS/SSL), so that
+// newly discovered Cloudflare main domains get TLS monitoring even when they
+// have no DNS record of their own (requirement 1.1, 2.1). It runs inside the
+// single-threaded dnsWorker (after runDNSSyncAll / reconcileRootDomainsFromCloudflare),
+// so it executes serially and is safe.
+//
+// For each zoneName it constructs a minimal apex Domain (MonitorPort from the
+// configured default, MonitorEnabled=true, AlertIgnored=false; ThirdpartDNSID/
+// DNSRecordID/DNSRecordType/DNSRecordValue left at their zero values since an
+// apex main domain is not itself a DNS record) and calls
+// DomainRepository.CreateIfNotExists. A name that already exists (any
+// Source — "manual" or "cloudflare") is left untouched: CreateIfNotExists
+// reports created=false and this is NOT an error (requirement 2.2, 2.3).
+//
+// Zone names that disappear from a later scan are never deleted or disabled
+// here — this function is purely additive (requirement 3.1). It also never
+// triggers a TLS probe for newly created records (requirement 2.4); probing is
+// left to the existing periodic RunDomainMonitor/ProbeAll cycle.
+//
+// A genuine DB error for a single zoneName is logged and the loop continues
+// with the remaining zoneNames (requirement 4.2); it does not abort the batch.
+// If domainRepo has not been wired up (nil, see SetDomainRepo), this function
+// is a no-op (requirement 4.3).
+func (s *SchedulerService) reconcileApexDomainMonitorsFromCloudflare(ctx context.Context, zoneNames []string) {
+	if s.domainRepo == nil {
+		return
+	}
+	port := s.defaultDomainMonitorPort()
+	for _, zoneName := range zoneNames {
+		domain := &model.Domain{
+			Name:           zoneName,
+			Source:         "cloudflare",
+			MonitorPort:    port,
+			MonitorEnabled: true,
+			AlertIgnored:   false,
+		}
+		if _, err := s.domainRepo.CreateIfNotExists(ctx, domain); err != nil {
+			log.Printf("[Scheduler] reconcile apex domain monitor for %q failed: %v", zoneName, err)
+			continue
+		}
 	}
 }
 
