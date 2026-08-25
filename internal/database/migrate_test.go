@@ -206,3 +206,227 @@ func TestMigrate_DomainsNameNormalizedUniqueIndex(t *testing.T) {
 		t.Fatalf("insert of a genuinely different domain name should succeed, got error: %v", err)
 	}
 }
+
+// TestMigrate_DedupesPreExistingDuplicateDomainsBeforeUniqueIndex reproduces
+// the production bug: a domains table created by an OLDER version of the
+// schema (before idx_domains_name_normalized existed) already contains rows
+// whose names collide once normalized (case/trailing-dot differences). This
+// must no longer make Migrate() fail — the duplicates must be cleaned up
+// before the unique index is created, and Migrate() must succeed.
+func TestMigrate_DedupesPreExistingDuplicateDomainsBeforeUniqueIndex(t *testing.T) {
+	db := openTestDB(t)
+
+	// Simulate a pre-migration domains table (no unique index yet) already
+	// containing case/trailing-dot duplicates, as would exist on a real
+	// production database that predates this feature.
+	if _, err := db.Exec(`CREATE TABLE domains (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL,
+		source TEXT DEFAULT 'manual',
+		thirdpart_dns_id TEXT DEFAULT '',
+		dns_record_type TEXT DEFAULT '',
+		dns_record_value TEXT DEFAULT '',
+		monitor_port INTEGER NOT NULL DEFAULT 443,
+		linked_machine_id TEXT,
+		linked_certificate_id TEXT,
+		linked_machine_certificate_id TEXT,
+		monitor_enabled INTEGER NOT NULL DEFAULT 1,
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL
+	)`); err != nil {
+		t.Fatalf("failed to create legacy domains table: %v", err)
+	}
+
+	rows := []struct {
+		id, name, createdAt, linkedMachineID string
+	}{
+		{"dup-1", "Example.com", "2024-01-01T00:00:00Z", ""},           // earliest, no association
+		{"dup-2", "example.com.", "2024-01-02T00:00:00Z", "machine-1"}, // later, but has an association
+		{"dup-3", "EXAMPLE.COM", "2024-01-03T00:00:00Z", ""},           // latest, no association
+		{"keep-me", "other.com", "2024-01-01T00:00:00Z", ""},           // not part of any collision
+	}
+	for _, r := range rows {
+		linkedMachineID := interface{}(nil)
+		if r.linkedMachineID != "" {
+			linkedMachineID = r.linkedMachineID
+		}
+		if _, err := db.Exec(`INSERT INTO domains (id, name, linked_machine_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
+			r.id, r.name, linkedMachineID, r.createdAt, r.createdAt); err != nil {
+			t.Fatalf("failed to seed domain %s: %v", r.id, err)
+		}
+	}
+
+	// Migrate() must succeed despite the pre-existing collisions.
+	if err := db.Migrate(); err != nil {
+		t.Fatalf("Migrate should dedupe pre-existing duplicates and succeed, got: %v", err)
+	}
+
+	// Exactly one row should survive from the {dup-1, dup-2, dup-3} group,
+	// and it must be dup-2 since it's the only one carrying a real
+	// association (linked_machine_id), even though it's not the earliest.
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM domains WHERE LOWER(RTRIM(name, '.')) = 'example.com'`).Scan(&count); err != nil {
+		t.Fatalf("failed to count surviving example.com rows: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly 1 surviving row for the example.com group, got %d", count)
+	}
+
+	var survivorID string
+	if err := db.QueryRow(`SELECT id FROM domains WHERE LOWER(RTRIM(name, '.')) = 'example.com'`).Scan(&survivorID); err != nil {
+		t.Fatalf("failed to fetch surviving row id: %v", err)
+	}
+	if survivorID != "dup-2" {
+		t.Errorf("expected surviving row to be 'dup-2' (the only one with an association), got %q", survivorID)
+	}
+
+	// The unrelated row must be untouched.
+	if err := db.QueryRow(`SELECT COUNT(*) FROM domains WHERE id = 'keep-me'`).Scan(&count); err != nil {
+		t.Fatalf("failed to count keep-me row: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected the unrelated 'keep-me' row to be untouched, got count %d", count)
+	}
+
+	// The unique index must now be genuinely in effect: a fresh duplicate
+	// insert without ON CONFLICT must fail.
+	if _, err := db.Exec(`INSERT INTO domains (id, name, created_at, updated_at) VALUES ('dup-4', 'example.COM', '2024-01-04T00:00:00Z', '2024-01-04T00:00:00Z')`); err == nil {
+		t.Fatal("expected insert of another normalized-duplicate name to fail now that the unique index exists")
+	}
+}
+
+// TestMigrate_DedupeRepointsMonitorResultsToSurvivor verifies that when a
+// losing duplicate row is deleted, any domain_monitor_results rows that
+// referenced it are repointed to the surviving row's id first, so the
+// FK constraint (domain_monitor_results.domain_id REFERENCES domains(id),
+// enforced via PRAGMA foreign_keys=ON) is never violated and no historical
+// probe result is lost or left dangling.
+func TestMigrate_DedupeRepointsMonitorResultsToSurvivor(t *testing.T) {
+	db := openTestDB(t)
+
+	if _, err := db.Exec(`PRAGMA foreign_keys=ON`); err != nil {
+		t.Fatalf("failed to enable foreign keys: %v", err)
+	}
+
+	if _, err := db.Exec(`CREATE TABLE domains (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL,
+		source TEXT DEFAULT 'manual',
+		thirdpart_dns_id TEXT DEFAULT '',
+		dns_record_type TEXT DEFAULT '',
+		dns_record_value TEXT DEFAULT '',
+		monitor_port INTEGER NOT NULL DEFAULT 443,
+		linked_machine_id TEXT,
+		linked_certificate_id TEXT,
+		linked_machine_certificate_id TEXT,
+		monitor_enabled INTEGER NOT NULL DEFAULT 1,
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL
+	)`); err != nil {
+		t.Fatalf("failed to create legacy domains table: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE domain_monitor_results (
+		id TEXT PRIMARY KEY,
+		domain_id TEXT NOT NULL REFERENCES domains(id),
+		checked_port INTEGER NOT NULL,
+		tls_success INTEGER NOT NULL DEFAULT 0,
+		domain_matched INTEGER NOT NULL DEFAULT 0,
+		chain_valid INTEGER NOT NULL DEFAULT 0,
+		checked_at TEXT NOT NULL
+	)`); err != nil {
+		t.Fatalf("failed to create domain_monitor_results table: %v", err)
+	}
+
+	// Two rows collide (no association on either), "loser" is earlier so it
+	// would win under a pure earliest-created_at rule, but here neither row
+	// has an association so earliest-created_at IS the deciding rule and
+	// "loser" (earlier) should actually survive. To specifically exercise the
+	// repoint-then-delete path, seed a monitor result against the row that
+	// will be deleted (the later one, "later").
+	if _, err := db.Exec(`INSERT INTO domains (id, name, created_at, updated_at) VALUES ('earlier', 'dup.com', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("failed to seed earlier domain: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO domains (id, name, created_at, updated_at) VALUES ('later', 'DUP.com.', '2024-01-02T00:00:00Z', '2024-01-02T00:00:00Z')`); err != nil {
+		t.Fatalf("failed to seed later domain: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO domain_monitor_results (id, domain_id, checked_port, checked_at) VALUES ('result-1', 'later', 443, '2024-01-02T00:00:00Z')`); err != nil {
+		t.Fatalf("failed to seed monitor result for the losing row: %v", err)
+	}
+
+	if err := db.Migrate(); err != nil {
+		t.Fatalf("Migrate should dedupe and repoint monitor results without violating the FK constraint, got: %v", err)
+	}
+
+	// "earlier" must have survived (earliest created_at, neither row had an
+	// association) and "later" must be gone.
+	var survivorID string
+	if err := db.QueryRow(`SELECT id FROM domains WHERE LOWER(RTRIM(name, '.')) = 'dup.com'`).Scan(&survivorID); err != nil {
+		t.Fatalf("failed to fetch surviving row id: %v", err)
+	}
+	if survivorID != "earlier" {
+		t.Errorf("expected 'earlier' to survive (earliest created_at, no associations in group), got %q", survivorID)
+	}
+
+	// The monitor result must now point at the survivor, not be deleted.
+	var repointedDomainID string
+	if err := db.QueryRow(`SELECT domain_id FROM domain_monitor_results WHERE id = 'result-1'`).Scan(&repointedDomainID); err != nil {
+		t.Fatalf("expected monitor result 'result-1' to still exist (repointed, not deleted), got error: %v", err)
+	}
+	if repointedDomainID != "earlier" {
+		t.Errorf("expected monitor result to be repointed to the surviving domain id 'earlier', got %q", repointedDomainID)
+	}
+}
+
+// TestMigrate_DedupeIsIdempotent verifies that once duplicates have been
+// cleaned up and the unique index created, repeated Migrate() calls remain
+// idempotent: no error, no further row changes.
+func TestMigrate_DedupeIsIdempotent(t *testing.T) {
+	db := openTestDB(t)
+
+	if _, err := db.Exec(`CREATE TABLE domains (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL,
+		source TEXT DEFAULT 'manual',
+		thirdpart_dns_id TEXT DEFAULT '',
+		dns_record_type TEXT DEFAULT '',
+		dns_record_value TEXT DEFAULT '',
+		monitor_port INTEGER NOT NULL DEFAULT 443,
+		linked_machine_id TEXT,
+		linked_certificate_id TEXT,
+		linked_machine_certificate_id TEXT,
+		monitor_enabled INTEGER NOT NULL DEFAULT 1,
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL
+	)`); err != nil {
+		t.Fatalf("failed to create legacy domains table: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO domains (id, name, created_at, updated_at) VALUES ('a', 'Foo.com', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("failed to seed domain: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO domains (id, name, created_at, updated_at) VALUES ('b', 'foo.com.', '2024-01-02T00:00:00Z', '2024-01-02T00:00:00Z')`); err != nil {
+		t.Fatalf("failed to seed domain: %v", err)
+	}
+
+	if err := db.Migrate(); err != nil {
+		t.Fatalf("first Migrate() failed: %v", err)
+	}
+	var countAfterFirst int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM domains`).Scan(&countAfterFirst); err != nil {
+		t.Fatalf("failed to count domains after first Migrate: %v", err)
+	}
+	if countAfterFirst != 1 {
+		t.Fatalf("expected exactly 1 domain to survive after first Migrate, got %d", countAfterFirst)
+	}
+
+	// Second call must succeed and must not change anything further.
+	if err := db.Migrate(); err != nil {
+		t.Fatalf("second Migrate() should be idempotent, got: %v", err)
+	}
+	var countAfterSecond int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM domains`).Scan(&countAfterSecond); err != nil {
+		t.Fatalf("failed to count domains after second Migrate: %v", err)
+	}
+	if countAfterSecond != countAfterFirst {
+		t.Fatalf("expected row count to stay at %d after a repeated Migrate() call, got %d", countAfterFirst, countAfterSecond)
+	}
+}
