@@ -420,16 +420,43 @@ func (s *ThirdpartDNSService) syncToLocalDomains(ctx context.Context, config *mo
 		return nil, fmt.Errorf("failed to list existing domains: %w", err)
 	}
 
-	// Build existingMap: prefer dns_record_id, fallback for legacy data without record ID
-	existingByRecordID := make(map[string]*model.Domain)  // dns_record_id → domain
-	existingByFallback := make(map[string]*model.Domain)  // normalizeHostname+type → domain (only for dns_record_id == "")
+	// incomingRecordIDs is the set of every record.ID present in this sync's
+	// fetch result, computed up front so the fallback candidate pool below can
+	// correctly exclude existing rows that WILL be matched exactly by
+	// existingByRecordID — otherwise a row already claimed by its own
+	// dns_record_id could ALSO be claimed a second time via the hostname+type
+	// fallback by an unrelated incoming record, corrupting its DNS fields.
+	incomingRecordIDs := make(map[string]bool, len(fetchResult.Records))
+	for _, record := range fetchResult.Records {
+		incomingRecordIDs[record.ID] = true
+	}
+
+	// Build existingMap: prefer dns_record_id, fallback for legacy/re-created
+	// records without a matching record ID. Unlike existingByRecordID (a strict
+	// 1:1 map keyed by the stable Cloudflare record ID), existingByFallback is
+	// keyed only by normalizeHostname+type and can legitimately hold MULTIPLE
+	// domains per key (e.g. two A records, or an A and an AAAA record, for the
+	// same hostname) — hostnames are NOT required to be globally unique, only
+	// dns_record_id identity is. A row is added to the fallback pool only when
+	// it will NOT be matched exactly via existingByRecordID this sync (its
+	// DNSRecordID is empty — legacy data — or no longer present in this sync's
+	// results — the Cloudflare-side record was deleted and recreated with a new
+	// ID). This lets such a row be matched and UPDATED by hostname+type instead
+	// of being deleted and re-created from scratch, which would silently reset
+	// any user-modified fields (monitor_enabled, alert_ignored, linked_*) back
+	// to their defaults.
+	existingByRecordID := make(map[string]*model.Domain)   // dns_record_id → domain (dns_record_id != "")
+	existingByFallback := make(map[string][]*model.Domain) // normalizeHostname+type → domains (possibly >1)
 	for _, d := range existingDomains {
 		if d.DNSRecordID != "" {
 			existingByRecordID[d.DNSRecordID] = d
-		} else {
-			fk := normalizeHostname(d.Name) + "\x00" + strings.ToUpper(d.DNSRecordType)
-			existingByFallback[fk] = d
+			if incomingRecordIDs[d.DNSRecordID] {
+				// Will be matched exactly this sync; not a fallback candidate.
+				continue
+			}
 		}
+		fk := normalizeHostname(d.Name) + "\x00" + strings.ToUpper(d.DNSRecordType)
+		existingByFallback[fk] = append(existingByFallback[fk], d)
 	}
 
 	// Create / Update phase
@@ -450,41 +477,71 @@ func (s *ThirdpartDNSService) syncToLocalDomains(ctx context.Context, config *mo
 				}
 				result.UpdatedDomains = append(result.UpdatedDomains, record.Name)
 			}
-		} else {
-			// Check legacy data fallback match (one-time migration)
-			fk := normalizeHostname(record.Name) + "\x00" + strings.ToUpper(record.Type)
-			if oldDomain, ok := existingByFallback[fk]; ok {
-				// Migration: update dns_record_id and value, preserve user settings
-				updates := map[string]interface{}{
-					"dns_record_id":    record.ID,
-					"dns_record_type":  record.Type,
-					"dns_record_value": record.Value,
-				}
-				if err := s.domainRepo.Update(ctx, oldDomain.ID, updates); err != nil {
-					return result, fmt.Errorf("failed to migrate domain %s: %w", oldDomain.Name, err)
-				}
-				result.UpdatedDomains = append(result.UpdatedDomains, record.Name)
-				delete(existingByFallback, fk) // Already migrated, remove from fallback map
-			} else {
-				// Create: new record — directly construct *model.Domain and call domainRepo.Create()
-				// Does NOT use CreateDomainInput (only for manual HTTP creation),
-				// does NOT go through DomainMonitorService.Create() (which would trigger auto-probe)
-				newDomain := &model.Domain{
-					Name:           record.Name,
-					Source:         "cloudflare",
-					ThirdpartDNSID: config.ID,
-					DNSRecordID:    record.ID,
-					DNSRecordType:  record.Type,
-					DNSRecordValue: record.Value,
-					MonitorPort:    s.defaultPort(config),
-					MonitorEnabled: true,
-					AlertIgnored:   false,
-				}
-				if err := s.domainRepo.Create(ctx, newDomain); err != nil {
-					return result, fmt.Errorf("failed to create domain %s: %w", record.Name, err)
-				}
-				result.NewDomains = append(result.NewDomains, record.Name)
+			continue
+		}
+
+		// No exact dns_record_id match: look for a same-hostname+type existing
+		// domain that has NOT already been claimed by another record in this
+		// sync pass (this covers both legacy data with no dns_record_id at all,
+		// and a record whose Cloudflare-side ID changed — deleted and recreated
+		// with the same hostname/type). Claiming (removing from the fallback
+		// slice) prevents two incoming records from both being matched to the
+		// same pre-existing row when a hostname legitimately has multiple
+		// records of the same type.
+		fk := normalizeHostname(record.Name) + "\x00" + strings.ToUpper(record.Type)
+		if candidates := existingByFallback[fk]; len(candidates) > 0 {
+			oldDomain := candidates[0]
+			existingByFallback[fk] = candidates[1:] // claim it
+
+			updates := map[string]interface{}{
+				"dns_record_id":    record.ID,
+				"dns_record_type":  record.Type,
+				"dns_record_value": record.Value,
 			}
+			if err := s.domainRepo.Update(ctx, oldDomain.ID, updates); err != nil {
+				return result, fmt.Errorf("failed to migrate domain %s: %w", oldDomain.Name, err)
+			}
+			result.UpdatedDomains = append(result.UpdatedDomains, record.Name)
+			continue
+		}
+
+		// Create: genuinely new record — directly construct *model.Domain and
+		// call domainRepo.Create(). Does NOT use CreateDomainInput (only for
+		// manual HTTP creation), does NOT go through DomainMonitorService.Create()
+		// (which would trigger auto-probe).
+		newDomain := &model.Domain{
+			Name:           record.Name,
+			Source:         "cloudflare",
+			ThirdpartDNSID: config.ID,
+			DNSRecordID:    record.ID,
+			DNSRecordType:  record.Type,
+			DNSRecordValue: record.Value,
+			MonitorPort:    s.defaultPort(config),
+			MonitorEnabled: true,
+			AlertIgnored:   false,
+		}
+		if err := s.domainRepo.Create(ctx, newDomain); err != nil {
+			return result, fmt.Errorf("failed to create domain %s: %w", record.Name, err)
+		}
+		result.NewDomains = append(result.NewDomains, record.Name)
+	}
+
+	// Build the set of existing domain IDs that were migrated/updated via the
+	// fallback (hostname+type) match above, so the delete phase below does not
+	// treat them as vanished — a row can be updated by ID one moment and still
+	// need protecting from deletion in the same pass.
+	claimedByFallback := make(map[string]bool)
+	for _, existing := range existingDomains {
+		fk := normalizeHostname(existing.Name) + "\x00" + strings.ToUpper(existing.DNSRecordType)
+		stillUnclaimed := false
+		for _, d := range existingByFallback[fk] {
+			if d.ID == existing.ID {
+				stillUnclaimed = true
+				break
+			}
+		}
+		if !stillUnclaimed {
+			claimedByFallback[existing.ID] = true
 		}
 	}
 
@@ -492,7 +549,9 @@ func (s *ThirdpartDNSService) syncToLocalDomains(ctx context.Context, config *mo
 	// 1. source == "cloudflare"
 	// 2. thirdpart_dns_id == current config ID
 	// 3. within current main_domains scope
-	// 4. dns_record_id not in this sync's results (or empty for unmigrated legacy data)
+	// 4. dns_record_id not in this sync's results, AND not claimed via the
+	//    hostname+type fallback match above (a record whose Cloudflare-side ID
+	//    changed is claimed/updated, not deleted)
 	for _, existing := range existingDomains {
 		if existing.Source != "cloudflare" || existing.ThirdpartDNSID != config.ID {
 			continue
@@ -501,16 +560,11 @@ func (s *ThirdpartDNSService) syncToLocalDomains(ctx context.Context, config *mo
 		if !isInMainDomainScope(normalized, config.MainDomains) {
 			continue // Not in current scope, don't delete
 		}
-		// Has dns_record_id: check if still in sync results
 		if existing.DNSRecordID != "" && syncedRecordIDs[existing.DNSRecordID] {
-			continue // Still exists, don't delete
+			continue // Still exists under its current dns_record_id, don't delete
 		}
-		// Legacy data without dns_record_id: check if already migrated via fallback
-		if existing.DNSRecordID == "" {
-			fk := normalizeHostname(existing.Name) + "\x00" + strings.ToUpper(existing.DNSRecordType)
-			if _, stillInFallback := existingByFallback[fk]; !stillInFallback {
-				continue // Already migrated, don't delete
-			}
+		if claimedByFallback[existing.ID] {
+			continue // Matched and updated via hostname+type fallback, don't delete
 		}
 		// Delete domain and its monitor results (domainRepo.Delete cascades)
 		if err := s.domainRepo.Delete(ctx, existing.ID); err != nil {

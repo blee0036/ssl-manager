@@ -94,82 +94,46 @@ func (r *DomainRepository) Create(ctx context.Context, domain *model.Domain) err
 	return nil
 }
 
-// CreateIfNotExists atomically inserts a new domain unless one with the same
-// normalized name (LOWER+RTRIM '.') already exists, reporting whether a NEW row
-// was created.
+// DeleteZoneOnlyCloudflareRecords removes domains rows that were created by the
+// (now-removed) Cloudflare apex auto-sync logic: it added a TLS/SSL monitor for
+// every Cloudflare Zone's root domain purely because the Zone existed, with no
+// regard for whether that hostname actually resolves via any A/AAAA/CNAME
+// record. That was a design error — a hostname should only be monitored for
+// TLS when it has a real DNS record backing it (which is exactly what
+// ThirdpartDNSService.syncToLocalDomains already handles).
 //
-// It is the race-safe, idempotent dedup primitive for the Cloudflare apex
-// auto-sync path (cloudflare-domain-auto-sync). A plain "GetByName then Create"
-// sequence has a check-then-act race: two concurrent callers (e.g. two dnsWorker
-// ticks, or the auto-sync racing a manual create) can both miss, then one insert
-// wins and the other trips the unique index on LOWER(RTRIM(name, '.')). This
-// method instead performs a single
-// `INSERT ... ON CONFLICT(LOWER(RTRIM(name, '.'))) DO NOTHING`, so a conflict is
-// NOT an error — it simply means a domain with the same normalized name already
-// exists (regardless of Source: "manual" or "cloudflare"). In that case the
-// existing row is left untouched and the method returns (created=false,
-// err=nil). Only a genuine DB failure returns a non-nil error.
+// The signature that uniquely identifies such a leftover row is
+// source='cloudflare' AND thirdpart_dns_id=” AND dns_record_id=”. Every
+// legitimate cloudflare-sourced row — whether freshly synced or pre-existing
+// legacy data missing only dns_record_id — always has thirdpart_dns_id set
+// (ThirdpartDNSService.syncToLocalDomains's Create always populates it), so
+// this signature can never match a real DNS-record-synced domain or a
+// manually-created one (Source="manual").
 //
-// Field handling mirrors Create exactly: a uuid is generated when ID is empty,
-// created_at/updated_at are stamped with UTC now, Source defaults to "manual",
-// the two bool flags are stored as INTEGER, and the optional linked-ID fields as
-// nullable strings.
-//
-// Mirrors RootDomainRepository.CreateIfNotExists. NOT used by the existing
-// manual-create (DomainMonitorService.Create → Create) or DNS-record-sync
-// (ThirdpartDNSService.syncToLocalDomains) paths, which keep their current
-// Create() call sites unchanged.
-func (r *DomainRepository) CreateIfNotExists(ctx context.Context, domain *model.Domain) (bool, error) {
-	if domain.ID == "" {
-		domain.ID = uuid.New().String()
+// Any domain_monitor_results rows for a matched domain are deleted first (the
+// same cascade DomainRepository.Delete performs for a single row), avoiding a
+// foreign key violation under PRAGMA foreign_keys=ON. Returns the number of
+// domains rows removed. Idempotent: once no row matches the signature, this is
+// a no-op on every subsequent call.
+func (r *DomainRepository) DeleteZoneOnlyCloudflareRecords(ctx context.Context) (int64, error) {
+	const matchClause = `source = 'cloudflare' AND thirdpart_dns_id = '' AND dns_record_id = ''`
+
+	if _, err := r.db.ExecContext(ctx,
+		`DELETE FROM domain_monitor_results WHERE domain_id IN (SELECT id FROM domains WHERE `+matchClause+`)`,
+	); err != nil {
+		return 0, fmt.Errorf("failed to delete monitor results for zone-only cloudflare domains: %w", err)
 	}
 
-	now := time.Now().UTC()
-	domain.CreatedAt = now
-	domain.UpdatedAt = now
-
-	if domain.Source == "" {
-		domain.Source = "manual"
-	}
-
-	query := `INSERT INTO domains (
-		id, name, source, thirdpart_dns_id, dns_record_id, dns_record_type, dns_record_value,
-		monitor_port, linked_machine_id, linked_certificate_id,
-		linked_machine_certificate_id, monitor_enabled, alert_ignored, created_at, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	ON CONFLICT(LOWER(RTRIM(name, '.'))) DO NOTHING`
-
-	result, err := r.db.ExecContext(ctx, query,
-		domain.ID,
-		domain.Name,
-		domain.Source,
-		domain.ThirdpartDNSID,
-		domain.DNSRecordID,
-		domain.DNSRecordType,
-		domain.DNSRecordValue,
-		domain.MonitorPort,
-		nullableString(domain.LinkedMachineID),
-		nullableString(domain.LinkedCertificateID),
-		nullableString(domain.LinkedMachineCertificateID),
-		boolToInt(domain.MonitorEnabled),
-		boolToInt(domain.AlertIgnored),
-		domain.CreatedAt.Format(time.RFC3339),
-		domain.UpdatedAt.Format(time.RFC3339),
-	)
+	result, err := r.db.ExecContext(ctx, `DELETE FROM domains WHERE `+matchClause)
 	if err != nil {
-		return false, fmt.Errorf("failed to insert domain: %w", err)
+		return 0, fmt.Errorf("failed to delete zone-only cloudflare domains: %w", err)
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		return false, fmt.Errorf("failed to get rows affected: %w", err)
+		return 0, fmt.Errorf("failed to get rows affected: %w", err)
 	}
-
-	// rowsAffected == 0 means the ON CONFLICT(LOWER(RTRIM(name, '.'))) DO NOTHING
-	// clause skipped the insert because a domain with the same normalized name
-	// already existed. That is the idempotent "already exists" outcome
-	// (created=false), not an error.
-	return rowsAffected > 0, nil
+	return rowsAffected, nil
 }
 
 // GetByID retrieves a domain by ID.
