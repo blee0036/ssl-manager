@@ -138,7 +138,7 @@ func DefaultConfig() *Config {
 		},
 		Certbot: CertbotConfig{
 			BinaryPath: "certbot",
-			DataDir:    "./data/certbot",
+			DataDir:    "",
 			Email:      "",
 		},
 		Readonly: ReadonlyConfig{

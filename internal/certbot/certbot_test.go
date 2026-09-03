@@ -668,11 +668,24 @@ func TestCertOutputDir_DefaultPath(t *testing.T) {
 	executor := &mockExecutor{}
 	wrapper := NewCertbotWrapper(newTestRuntimeCfg(cfg), executor)
 
-	// When DataDir is empty, effectiveDataDir() returns "./data/certbot"
-	expected := filepath.Join("./data/certbot", "live", "example.com")
+	// When DataDir is empty, effectiveDataDir() returns Certbot's native
+	// default config directory.
+	expected := filepath.Join("/etc/letsencrypt", "live", "example.com")
 	got := wrapper.certOutputDir("example.com")
 	if got != expected {
 		t.Errorf("expected %q, got %q", expected, got)
+	}
+}
+
+func TestCertOutputDir_WildcardUsesBaseDomain(t *testing.T) {
+	cfg := config.CertbotConfig{DataDir: "/var/certbot"}
+	executor := &mockExecutor{}
+	wrapper := NewCertbotWrapper(newTestRuntimeCfg(cfg), executor)
+
+	expected := filepath.Join("/var/certbot", "live", "example.com")
+	got := wrapper.certOutputDir("*.example.com")
+	if got != expected {
+		t.Errorf("expected wildcard certificate output path %q, got %q", expected, got)
 	}
 }
 
@@ -712,10 +725,11 @@ func TestBuildCertbotArgs_NoDataDir(t *testing.T) {
 	args := wrapper.buildCertbotArgs([]string{"example.com"}, "test@example.com")
 	argsStr := strings.Join(args, " ")
 
-	// When DataDir is empty, effectiveDataDir() returns "./data/certbot"
+	// When DataDir is empty, effectiveDataDir() returns Certbot's native
+	// default config directory.
 	// and buildCertbotArgs always passes directory flags
-	if !strings.Contains(argsStr, "--config-dir ./data/certbot") {
-		t.Errorf("expected --config-dir ./data/certbot when DataDir is empty, got: %s", argsStr)
+	if !strings.Contains(argsStr, "--config-dir /etc/letsencrypt") {
+		t.Errorf("expected --config-dir /etc/letsencrypt when DataDir is empty, got: %s", argsStr)
 	}
 	if !strings.Contains(argsStr, "--work-dir") {
 		t.Errorf("expected --work-dir flag when DataDir is empty, got: %s", argsStr)

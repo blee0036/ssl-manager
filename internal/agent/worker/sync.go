@@ -2,7 +2,11 @@ package worker
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net/http"
@@ -105,10 +109,12 @@ func (w *SyncWorker) GetConfigsNeedingDeployment(ctx context.Context) ([]CertCon
 }
 
 // NeedsDeployment determines if a certificate config needs deployment by checking:
-// 1. Local certificate file doesn't exist
-// 2. Local fingerprint doesn't match server fingerprint
-// 3. config_revision differs from local last_synced_revision
-// 4. Server status is "pending"
+// 1. Local certificate file doesn't exist or cannot be parsed
+// 2. Actual local certificate fingerprint doesn't match the server fingerprint
+// 3. Local state fingerprint doesn't match the server fingerprint
+// 4. config_revision differs from local last_synced_revision
+// 5. The previous deployment failed
+// 6. Server status is "pending" or "failed"
 func NeedsDeployment(cfg CertConfigResponse, localState *config.MachineCertState) bool {
 	// If no local state exists, this is a new config that needs deployment
 	if localState == nil {
@@ -120,7 +126,15 @@ func NeedsDeployment(cfg CertConfigResponse, localState *config.MachineCertState
 		return true
 	}
 
-	// Check if local fingerprint doesn't match server fingerprint
+	// Check the actual certificate on disk, not only the persisted Agent state.
+	// This catches certificates replaced or deleted by another process.
+	localFingerprint, err := certificateFingerprint(cfg.CertPath)
+	if err != nil || localFingerprint != cfg.FingerprintSHA256 {
+		return true
+	}
+
+	// Check if the persisted local fingerprint doesn't match the server
+	// fingerprint. This also repairs stale state after an interrupted deploy.
 	if localState.LastSyncedFingerprint != cfg.FingerprintSHA256 {
 		return true
 	}
@@ -130,12 +144,40 @@ func NeedsDeployment(cfg CertConfigResponse, localState *config.MachineCertState
 		return true
 	}
 
+	// A failed deployment must remain retryable on every subsequent polling
+	// cycle until a deployment succeeds.
+	if localState.LastDeployStatus == "failed" || cfg.LastDeployStatus == "failed" {
+		return true
+	}
+
 	// Check if server status is "pending"
 	if cfg.LastDeployStatus == "pending" {
 		return true
 	}
 
 	return false
+}
+
+// certificateFingerprint returns the SHA-256 fingerprint of the leaf
+// certificate in a PEM or fullchain PEM file.
+func certificateFingerprint(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("failed to read certificate: %w", err)
+	}
+
+	block, _ := pem.Decode(data)
+	if block == nil || block.Type != "CERTIFICATE" {
+		return "", fmt.Errorf("certificate PEM block not found")
+	}
+
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse certificate: %w", err)
+	}
+
+	sum := sha256.Sum256(cert.Raw)
+	return hex.EncodeToString(sum[:]), nil
 }
 
 // fileExists checks if a file exists at the given path.

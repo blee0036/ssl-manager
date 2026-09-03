@@ -8,6 +8,23 @@ import (
 	"github.com/ssl-manager/ssl-manager/internal/agent/config"
 )
 
+func writeSyncTestCertificate(t *testing.T) (string, string) {
+	t.Helper()
+
+	tmpDir := t.TempDir()
+	certPath := filepath.Join(tmpDir, "cert.pem")
+	certPEM, _ := generateTestCertAndKey(t)
+	if err := os.WriteFile(certPath, certPEM, 0644); err != nil {
+		t.Fatalf("failed to write test certificate: %v", err)
+	}
+
+	fingerprint, err := certificateFingerprint(certPath)
+	if err != nil {
+		t.Fatalf("failed to fingerprint test certificate: %v", err)
+	}
+	return certPath, fingerprint
+}
+
 func TestNeedsDeployment_NilLocalState(t *testing.T) {
 	cfg := CertConfigResponse{
 		MachineCertificateID: "mc-1",
@@ -47,11 +64,7 @@ func TestNeedsDeployment_LocalFileNotExist(t *testing.T) {
 
 func TestNeedsDeployment_FingerprintMismatch(t *testing.T) {
 	// Create a temp file to simulate existing cert
-	tmpDir := t.TempDir()
-	certPath := filepath.Join(tmpDir, "cert.pem")
-	if err := os.WriteFile(certPath, []byte("cert content"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	certPath, _ := writeSyncTestCertificate(t)
 
 	cfg := CertConfigResponse{
 		MachineCertificateID: "mc-1",
@@ -76,16 +89,12 @@ func TestNeedsDeployment_FingerprintMismatch(t *testing.T) {
 
 func TestNeedsDeployment_ConfigRevisionDiffers(t *testing.T) {
 	// Create a temp file to simulate existing cert
-	tmpDir := t.TempDir()
-	certPath := filepath.Join(tmpDir, "cert.pem")
-	if err := os.WriteFile(certPath, []byte("cert content"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	certPath, fingerprint := writeSyncTestCertificate(t)
 
 	cfg := CertConfigResponse{
 		MachineCertificateID: "mc-1",
 		CertificateID:        "cert-1",
-		FingerprintSHA256:    "abc123",
+		FingerprintSHA256:    fingerprint,
 		CertPath:             certPath,
 		ConfigRevision:       3,
 		LastDeployStatus:     "success",
@@ -94,7 +103,7 @@ func TestNeedsDeployment_ConfigRevisionDiffers(t *testing.T) {
 	localState := &config.MachineCertState{
 		MachineCertificateID:  "mc-1",
 		LastSyncedRevision:    2,
-		LastSyncedFingerprint: "abc123",
+		LastSyncedFingerprint: fingerprint,
 		LastDeployStatus:      "success",
 	}
 
@@ -105,16 +114,12 @@ func TestNeedsDeployment_ConfigRevisionDiffers(t *testing.T) {
 
 func TestNeedsDeployment_StatusPending(t *testing.T) {
 	// Create a temp file to simulate existing cert
-	tmpDir := t.TempDir()
-	certPath := filepath.Join(tmpDir, "cert.pem")
-	if err := os.WriteFile(certPath, []byte("cert content"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	certPath, fingerprint := writeSyncTestCertificate(t)
 
 	cfg := CertConfigResponse{
 		MachineCertificateID: "mc-1",
 		CertificateID:        "cert-1",
-		FingerprintSHA256:    "abc123",
+		FingerprintSHA256:    fingerprint,
 		CertPath:             certPath,
 		ConfigRevision:       1,
 		LastDeployStatus:     "pending",
@@ -123,7 +128,7 @@ func TestNeedsDeployment_StatusPending(t *testing.T) {
 	localState := &config.MachineCertState{
 		MachineCertificateID:  "mc-1",
 		LastSyncedRevision:    1,
-		LastSyncedFingerprint: "abc123",
+		LastSyncedFingerprint: fingerprint,
 		LastDeployStatus:      "success",
 	}
 
@@ -134,16 +139,12 @@ func TestNeedsDeployment_StatusPending(t *testing.T) {
 
 func TestNeedsDeployment_NoDeploymentNeeded(t *testing.T) {
 	// Create a temp file to simulate existing cert
-	tmpDir := t.TempDir()
-	certPath := filepath.Join(tmpDir, "cert.pem")
-	if err := os.WriteFile(certPath, []byte("cert content"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	certPath, fingerprint := writeSyncTestCertificate(t)
 
 	cfg := CertConfigResponse{
 		MachineCertificateID: "mc-1",
 		CertificateID:        "cert-1",
-		FingerprintSHA256:    "abc123",
+		FingerprintSHA256:    fingerprint,
 		CertPath:             certPath,
 		ConfigRevision:       1,
 		LastDeployStatus:     "success",
@@ -152,7 +153,7 @@ func TestNeedsDeployment_NoDeploymentNeeded(t *testing.T) {
 	localState := &config.MachineCertState{
 		MachineCertificateID:  "mc-1",
 		LastSyncedRevision:    1,
-		LastSyncedFingerprint: "abc123",
+		LastSyncedFingerprint: fingerprint,
 		LastDeployStatus:      "success",
 	}
 
@@ -163,16 +164,12 @@ func TestNeedsDeployment_NoDeploymentNeeded(t *testing.T) {
 
 func TestNeedsDeployment_EmptyLastDeployStatus(t *testing.T) {
 	// Create a temp file to simulate existing cert
-	tmpDir := t.TempDir()
-	certPath := filepath.Join(tmpDir, "cert.pem")
-	if err := os.WriteFile(certPath, []byte("cert content"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	certPath, fingerprint := writeSyncTestCertificate(t)
 
 	cfg := CertConfigResponse{
 		MachineCertificateID: "mc-1",
 		CertificateID:        "cert-1",
-		FingerprintSHA256:    "abc123",
+		FingerprintSHA256:    fingerprint,
 		CertPath:             certPath,
 		ConfigRevision:       1,
 		LastDeployStatus:     "", // empty status should not trigger deployment
@@ -181,7 +178,7 @@ func TestNeedsDeployment_EmptyLastDeployStatus(t *testing.T) {
 	localState := &config.MachineCertState{
 		MachineCertificateID:  "mc-1",
 		LastSyncedRevision:    1,
-		LastSyncedFingerprint: "abc123",
+		LastSyncedFingerprint: fingerprint,
 		LastDeployStatus:      "success",
 	}
 
@@ -190,31 +187,55 @@ func TestNeedsDeployment_EmptyLastDeployStatus(t *testing.T) {
 	}
 }
 
-func TestNeedsDeployment_FailedStatusNoOtherChanges(t *testing.T) {
+func TestNeedsDeployment_FailedStatusTriggersRetry(t *testing.T) {
 	// Create a temp file to simulate existing cert
-	tmpDir := t.TempDir()
-	certPath := filepath.Join(tmpDir, "cert.pem")
-	if err := os.WriteFile(certPath, []byte("cert content"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	certPath, fingerprint := writeSyncTestCertificate(t)
 
 	cfg := CertConfigResponse{
 		MachineCertificateID: "mc-1",
 		CertificateID:        "cert-1",
-		FingerprintSHA256:    "abc123",
+		FingerprintSHA256:    fingerprint,
 		CertPath:             certPath,
 		ConfigRevision:       1,
-		LastDeployStatus:     "failed", // failed status alone should not trigger re-deployment
+		LastDeployStatus:     "failed", // failed status must trigger a retry
 	}
 
 	localState := &config.MachineCertState{
 		MachineCertificateID:  "mc-1",
 		LastSyncedRevision:    1,
-		LastSyncedFingerprint: "abc123",
+		LastSyncedFingerprint: fingerprint,
 		LastDeployStatus:      "failed",
 	}
 
-	if NeedsDeployment(cfg, localState) {
-		t.Error("expected NeedsDeployment to return false when status is failed but nothing else changed")
+	if !NeedsDeployment(cfg, localState) {
+		t.Error("expected NeedsDeployment to return true so failed deployment is retried")
+	}
+}
+
+func TestNeedsDeployment_ActualCertificateFingerprintMismatch(t *testing.T) {
+	certPath, actualFingerprint := writeSyncTestCertificate(t)
+	const sourceFingerprint = "source-fingerprint"
+
+	cfg := CertConfigResponse{
+		MachineCertificateID: "mc-1",
+		CertificateID:        "cert-1",
+		FingerprintSHA256:    sourceFingerprint,
+		CertPath:             certPath,
+		ConfigRevision:       1,
+		LastDeployStatus:     "success",
+	}
+
+	localState := &config.MachineCertState{
+		MachineCertificateID:  "mc-1",
+		LastSyncedRevision:    1,
+		LastSyncedFingerprint: sourceFingerprint,
+		LastDeployStatus:      "success",
+	}
+
+	if actualFingerprint == sourceFingerprint {
+		t.Fatal("test setup requires different source and actual fingerprints")
+	}
+	if !NeedsDeployment(cfg, localState) {
+		t.Error("expected actual certificate fingerprint mismatch to trigger deployment")
 	}
 }

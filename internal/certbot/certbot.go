@@ -448,13 +448,14 @@ func (w *CertbotWrapper) ReadCertFiles(certbotOutputDir string) (*CertFiles, err
 }
 
 // effectiveDataDir returns the certbot data directory.
-// Returns configured data_dir if non-empty, otherwise defaults to "./data/certbot".
+// Returns configured data_dir if non-empty, otherwise uses Certbot's native
+// default config directory.
 func (w *CertbotWrapper) effectiveDataDir() string {
 	cfg := w.runtimeCfg.Get().Certbot
 	if cfg.DataDir != "" {
 		return cfg.DataDir
 	}
-	return "./data/certbot"
+	return "/etc/letsencrypt"
 }
 
 // ensureDirectories creates all required certbot directories.
@@ -482,7 +483,15 @@ func (w *CertbotWrapper) binaryPath() string {
 // certOutputDir returns the expected Certbot output directory for a given domain.
 // Uses effectiveDataDir() to ensure consistency with buildCertbotArgs.
 func (w *CertbotWrapper) certOutputDir(domain string) string {
-	return filepath.Join(w.effectiveDataDir(), "live", domain)
+	return filepath.Join(w.effectiveDataDir(), "live", certbotCertificateName(domain))
+}
+
+// certbotCertificateName returns the lineage directory name Certbot uses when
+// --cert-name is not specified. Certbot strips the "*." prefix from a
+// wildcard first domain, so *.example.com is stored under live/example.com.
+func certbotCertificateName(domain string) string {
+	domain = strings.TrimSpace(domain)
+	return strings.TrimPrefix(domain, "*.")
 }
 
 // buildCertbotArgs builds the common certbot certonly arguments.

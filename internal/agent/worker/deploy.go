@@ -88,6 +88,7 @@ func (w *DeployWorker) Deploy(ctx context.Context, certCfg CertConfigResponse) (
 		result.ErrorMessage = fmt.Sprintf("failed to download certificate: %v", err)
 		result.FinishedAt = time.Now()
 		w.reportDeploymentLog(ctx, certCfg, result)
+		w.updateLocalState(certCfg, certCfg.FingerprintSHA256, "failed")
 		return result, err
 	}
 
@@ -97,6 +98,7 @@ func (w *DeployWorker) Deploy(ctx context.Context, certCfg CertConfigResponse) (
 		result.ErrorMessage = fmt.Sprintf("certificate and private key do not match: %v", err)
 		result.FinishedAt = time.Now()
 		w.reportDeploymentLog(ctx, certCfg, result)
+		w.updateLocalState(certCfg, certCfg.FingerprintSHA256, "failed")
 		return result, err
 	}
 
@@ -107,6 +109,7 @@ func (w *DeployWorker) Deploy(ctx context.Context, certCfg CertConfigResponse) (
 		result.ErrorMessage = fmt.Sprintf("failed to write certificate files: %v", err)
 		result.FinishedAt = time.Now()
 		w.reportDeploymentLog(ctx, certCfg, result)
+		w.updateLocalState(certCfg, certCfg.FingerprintSHA256, "failed")
 		return result, err
 	}
 

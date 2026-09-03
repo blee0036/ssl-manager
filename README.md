@@ -248,6 +248,8 @@ Agent 安装后会：
 - `cert_path`：目标机器上的 fullchain 写入路径。
 - `private_key_path`：目标机器上的私钥写入路径。
 - `post_deploy_commands`：部署完成后按行执行的命令。
+
+Agent 每次轮询都会校验目标证书文件的实际指纹、配置版本和上次部署状态。目标证书与源证书不一致、目标文件被外部替换，或上次部署失败时，Agent 会在后续轮询中自动重试；每次失败都会记录部署日志并触发部署失败告警，成功后自动恢复告警。
 - `config_revision`：配置版本，用于触发 Agent 重新部署。
 
 以下情况会触发 Agent 部署：
@@ -394,7 +396,7 @@ heartbeat_timeout_seconds >= poll_interval_seconds * 2
 | 字段 | 默认值 | 影响 |
 |------|--------|------|
 | `binary_path` | `certbot` | Web Backend 调用的 Certbot 可执行文件路径。 |
-| `data_dir` | `./data/certbot` | Certbot 的 `--config-dir`、`--work-dir`、`--logs-dir` 基础目录。Docker 环境下默认指向 `/app/data/certbot`，确保非 root 用户可写。 |
+| `data_dir` | 空 | Certbot 的目录配置。为空时使用 `/etc/letsencrypt`；Docker 环境建议显式填写 `/app/data/certbot`。 |
 | `email` | 空 | Let's Encrypt 注册和签发使用的邮箱。使用 Certbot 签发时应配置。 |
 
 使用 Cloudflare DNS-01 签发时，运行环境需要满足：
@@ -406,8 +408,10 @@ heartbeat_timeout_seconds >= poll_interval_seconds * 2
 
 `certbot.data_dir` 会影响 SSL Manager 从哪里读取 Certbot 生成的证书：
 
-- 空：读取 `/etc/letsencrypt/live/<domain>/`。
+- 空：使用 Certbot 默认目录，读取 `/etc/letsencrypt/live/<domain>/`。
 - 非空：读取 `<data_dir>/live/<domain>/`。
+
+通配符证书的目录名使用 Certbot 的证书名规则。例如 `*.example.com` 的证书文件通常位于 `<data_dir>/live/example.com/`，而不是 `<data_dir>/live/*.example.com/`。
 
 如果 Web Backend 使用非 root 用户运行，需要确保该用户对 Certbot 目录和 SSL Manager `./data/certificates` 目录有读写权限。
 

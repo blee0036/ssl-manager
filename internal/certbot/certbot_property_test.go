@@ -38,12 +38,13 @@ func TestProperty_EffectiveDataDirConsistency(t *testing.T) {
 		nonEmptyPathGen,
 	))
 
-	// Property 2: when DataDir is empty, effectiveDataDir returns "./data/certbot"
+	// Property 2: when DataDir is empty, effectiveDataDir returns Certbot's
+	// native default config directory.
 	properties.Property("empty DataDir returns default path", prop.ForAll(
 		func(_ int) bool {
 			rCfg := config.NewRuntimeConfig(buildCfgWithDataDir(""))
 			w := NewCertbotWrapper(rCfg, &mockExecutor{})
-			return w.effectiveDataDir() == "./data/certbot"
+			return w.effectiveDataDir() == "/etc/letsencrypt"
 		},
 		gen.Int(),
 	))
