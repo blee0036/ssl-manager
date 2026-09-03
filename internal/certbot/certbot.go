@@ -14,6 +14,8 @@ import (
 	"github.com/ssl-manager/ssl-manager/internal/config"
 )
 
+const certbotDataDirEnv = "SSL_MANAGER_CERTBOT_DATA_DIR"
+
 // CertFiles holds the PEM content of certificate files read from Certbot's output directory.
 type CertFiles struct {
 	CertPEM       []byte
@@ -448,12 +450,16 @@ func (w *CertbotWrapper) ReadCertFiles(certbotOutputDir string) (*CertFiles, err
 }
 
 // effectiveDataDir returns the certbot data directory.
-// Returns configured data_dir if non-empty, otherwise uses Certbot's native
-// default config directory.
+// Explicit data_dir always wins. When it is empty, Docker sets
+// SSL_MANAGER_CERTBOT_DATA_DIR=/app/data/certbot; outside Docker the fallback
+// is Certbot's native /etc/letsencrypt directory.
 func (w *CertbotWrapper) effectiveDataDir() string {
 	cfg := w.runtimeCfg.Get().Certbot
 	if cfg.DataDir != "" {
 		return cfg.DataDir
+	}
+	if envDataDir := os.Getenv(certbotDataDirEnv); envDataDir != "" {
+		return envDataDir
 	}
 	return "/etc/letsencrypt"
 }

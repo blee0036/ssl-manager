@@ -63,6 +63,10 @@ RUN apk add --no-cache \
 
 WORKDIR /app
 
+# With no explicit certbot.data_dir, keep Certbot state in the persistent
+# application volume instead of trying to write the host-native /etc path.
+ENV SSL_MANAGER_CERTBOT_DATA_DIR=/app/data/certbot
+
 # Copy binaries
 COPY --from=builder /out/ssl-manager-web /app/ssl-manager-web
 COPY --from=builder /out/ssl-manager-agent-linux-amd64 /app/bin/ssl-manager-agent-linux-amd64

@@ -664,6 +664,8 @@ func TestCertOutputDir_WithDataDir(t *testing.T) {
 }
 
 func TestCertOutputDir_DefaultPath(t *testing.T) {
+	t.Setenv(certbotDataDirEnv, "")
+
 	cfg := config.CertbotConfig{DataDir: ""}
 	executor := &mockExecutor{}
 	wrapper := NewCertbotWrapper(newTestRuntimeCfg(cfg), executor)
@@ -686,6 +688,28 @@ func TestCertOutputDir_WildcardUsesBaseDomain(t *testing.T) {
 	got := wrapper.certOutputDir("*.example.com")
 	if got != expected {
 		t.Errorf("expected wildcard certificate output path %q, got %q", expected, got)
+	}
+}
+
+func TestEffectiveDataDir_UsesDockerEnvironmentDefault(t *testing.T) {
+	t.Setenv(certbotDataDirEnv, "/app/data/certbot")
+
+	cfg := config.CertbotConfig{DataDir: ""}
+	wrapper := NewCertbotWrapper(newTestRuntimeCfg(cfg), &mockExecutor{})
+
+	if got := wrapper.effectiveDataDir(); got != "/app/data/certbot" {
+		t.Errorf("expected Docker default data directory /app/data/certbot, got %q", got)
+	}
+}
+
+func TestEffectiveDataDir_ExplicitConfigOverridesEnvironment(t *testing.T) {
+	t.Setenv(certbotDataDirEnv, "/app/data/certbot")
+
+	cfg := config.CertbotConfig{DataDir: "/custom/certbot"}
+	wrapper := NewCertbotWrapper(newTestRuntimeCfg(cfg), &mockExecutor{})
+
+	if got := wrapper.effectiveDataDir(); got != "/custom/certbot" {
+		t.Errorf("expected explicit data_dir to override environment default, got %q", got)
 	}
 }
 
@@ -718,6 +742,8 @@ func TestBuildCertbotArgs(t *testing.T) {
 }
 
 func TestBuildCertbotArgs_NoDataDir(t *testing.T) {
+	t.Setenv(certbotDataDirEnv, "")
+
 	cfg := config.CertbotConfig{DataDir: ""}
 	executor := &mockExecutor{}
 	wrapper := NewCertbotWrapper(newTestRuntimeCfg(cfg), executor)

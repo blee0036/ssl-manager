@@ -396,7 +396,7 @@ heartbeat_timeout_seconds >= poll_interval_seconds * 2
 | 字段 | 默认值 | 影响 |
 |------|--------|------|
 | `binary_path` | `certbot` | Web Backend 调用的 Certbot 可执行文件路径。 |
-| `data_dir` | 空 | Certbot 的目录配置。为空时使用 `/etc/letsencrypt`；Docker 环境建议显式填写 `/app/data/certbot`。 |
+| `data_dir` | 空 | Certbot 的目录配置。非 Docker 为空时使用 `/etc/letsencrypt`；Docker 为空时使用 `/app/data/certbot`。 |
 | `email` | 空 | Let's Encrypt 注册和签发使用的邮箱。使用 Certbot 签发时应配置。 |
 
 使用 Cloudflare DNS-01 签发时，运行环境需要满足：
@@ -408,8 +408,10 @@ heartbeat_timeout_seconds >= poll_interval_seconds * 2
 
 `certbot.data_dir` 会影响 SSL Manager 从哪里读取 Certbot 生成的证书：
 
-- 空：使用 Certbot 默认目录，读取 `/etc/letsencrypt/live/<domain>/`。
+- 空：非 Docker 使用 `/etc/letsencrypt/live/<domain>/`；Docker 使用 `/app/data/certbot/live/<domain>/`。
 - 非空：读取 `<data_dir>/live/<domain>/`。
+
+Docker 默认通过 `SSL_MANAGER_CERTBOT_DATA_DIR=/app/data/certbot` 指定目录。显式填写 `data_dir` 时，以显式配置为准。
 
 通配符证书的目录名使用 Certbot 的证书名规则。例如 `*.example.com` 的证书文件通常位于 `<data_dir>/live/example.com/`，而不是 `<data_dir>/live/*.example.com/`。
 

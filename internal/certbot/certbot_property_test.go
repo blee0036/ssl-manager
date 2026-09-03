@@ -15,6 +15,8 @@ import (
 // **Validates: Requirements 1.1, 1.3, 1.6, 1.7**
 
 func TestProperty_EffectiveDataDirConsistency(t *testing.T) {
+	t.Setenv(certbotDataDirEnv, "")
+
 	parameters := gopter.DefaultTestParameters()
 	parameters.MinSuccessfulTests = 200
 	properties := gopter.NewProperties(parameters)

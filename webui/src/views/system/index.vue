@@ -240,7 +240,7 @@ onMounted(() => {
         <NFormItem label="二进制路径">
           <NInput v-model:value="model.certbot.binary_path" placeholder="/usr/bin/certbot" />
         </NFormItem>
-        <NFormItem label="数据目录">
+        <NFormItem label="数据目录（留空：非 Docker 使用 /etc/letsencrypt；Docker 使用 /app/data/certbot）">
           <NInput v-model:value="model.certbot.data_dir" placeholder="/etc/letsencrypt" />
         </NFormItem>
         <NFormItem label="邮箱" path="certbot.email">
