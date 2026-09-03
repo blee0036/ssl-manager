@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -22,6 +23,7 @@ type CertificateHandler struct {
 	dnsRepo        ThirdpartDNSLookup
 	mcCounter      MachineCertCounter
 	dataDir        string // base data directory for checking private key existence
+	certRenewer    CertificateRenewer
 }
 
 // ThirdpartDNSLookup defines the interface for looking up thirdpart DNS configs.
@@ -34,6 +36,11 @@ type MachineCertCounter interface {
 	CountByCertificateIDs(ctx context.Context, certIDs []string) (map[string]int, error)
 }
 
+// CertificateRenewer performs a direct renewal of an existing certificate.
+type CertificateRenewer interface {
+	RenewCertificate(ctx context.Context, certificateID string) (*model.Certificate, error)
+}
+
 // NewCertificateHandler creates a new CertificateHandler.
 func NewCertificateHandler(certService *service.CertificateService, certbotWrapper *certbot.CertbotWrapper, dnsRepo ThirdpartDNSLookup, mcCounter MachineCertCounter, dataDir string) *CertificateHandler {
 	return &CertificateHandler{
@@ -43,6 +50,12 @@ func NewCertificateHandler(certService *service.CertificateService, certbotWrapp
 		mcCounter:      mcCounter,
 		dataDir:        dataDir,
 	}
+}
+
+// SetCertificateRenewer wires the scheduler-backed manual certificate renewer.
+// It is a setter to keep existing handler construction compatible.
+func (h *CertificateHandler) SetCertificateRenewer(renewer CertificateRenewer) {
+	h.certRenewer = renewer
 }
 
 // RegisterRoutes registers certificate routes on the given chi router.
@@ -59,6 +72,7 @@ func (h *CertificateHandler) RegisterRoutes(r chi.Router, authService middleware
 		r.Get("/{id}", h.GetByID)
 		r.Put("/{id}", h.Update)
 		r.Delete("/{id}", h.Delete)
+		r.Post("/{id}/renew", h.Renew)
 
 		// Certbot issuance endpoints
 		r.Post("/issue/cloudflare", h.IssueCertbotCloudflare)
@@ -218,6 +232,44 @@ func (h *CertificateHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeSuccessResponse(w, http.StatusOK, "certificate deleted", nil)
+}
+
+// Renew handles POST /api/certificates/{id}/renew.
+// Only certificates originally issued with Certbot + Cloudflare DNS can be
+// renewed directly because their DNS credentials are persisted by the system.
+func (h *CertificateHandler) Renew(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeErrorResponse(w, http.StatusBadRequest, "certificate id is required", "")
+		return
+	}
+	if h.certRenewer == nil {
+		writeErrorResponse(w, http.StatusServiceUnavailable, "certificate renewal is not configured", "")
+		return
+	}
+
+	cert, err := h.certRenewer.RenewCertificate(r.Context(), id)
+	if err != nil {
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			writeErrorResponse(w, http.StatusNotFound, "certificate not found", "")
+		case errors.Is(err, service.ErrManualRenewalUnsupported):
+			writeErrorResponse(w, http.StatusBadRequest, "certificate does not support direct renewal", err.Error())
+		case errors.Is(err, service.ErrCertificateRenewalInProgress):
+			writeErrorResponse(w, http.StatusConflict, "certificate renewal is already in progress", "")
+		default:
+			writeErrorResponse(w, http.StatusInternalServerError, "certificate renewal failed", err.Error())
+		}
+		return
+	}
+
+	middleware.SetAuditInfo(r, middleware.AuditInfo{
+		TargetType: "certificate",
+		TargetID:   cert.ID,
+		Operation:  "renew_certificate",
+	})
+
+	writeSuccessResponse(w, http.StatusOK, "certificate renewed", h.toCertificateResponse(cert))
 }
 
 // toCertificateResponse converts a Certificate model to a CertificateResponse DTO.
@@ -433,10 +485,10 @@ func (h *CertificateHandler) CompleteManualDNS(w http.ResponseWriter, r *http.Re
 
 	// Save the certificate to the system
 	certInput := model.CreateCertInput{
-		Name:    certName,
-		CertPEM: result.CertFiles.CertPEM,
-		ChainPEM: result.CertFiles.ChainPEM,
-		KeyPEM:  result.CertFiles.PrivateKeyPEM,
+		Name:      certName,
+		CertPEM:   result.CertFiles.CertPEM,
+		ChainPEM:  result.CertFiles.ChainPEM,
+		KeyPEM:    result.CertFiles.PrivateKeyPEM,
 		AutoRenew: input.AutoRenew,
 		Source:    "certbot_manual_dns",
 	}

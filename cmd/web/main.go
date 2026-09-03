@@ -195,6 +195,7 @@ func run() error {
 	initHandler := handler.NewInitHandler(initService)
 	machineHandler := handler.NewMachineHandler(machineService)
 	certHandler := handler.NewCertificateHandler(certService, certbotWrapper, dnsRepo, mcRepo, dataDir)
+	certHandler.SetCertificateRenewer(schedulerService)
 	mcHandler := handler.NewMachineCertificateHandler(mcService)
 	deployLogHandler := handler.NewDeploymentLogHandler(deployLogService)
 	domainHandler := handler.NewDomainHandler(domainMonitorService)

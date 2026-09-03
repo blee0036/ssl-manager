@@ -2,7 +2,7 @@
 import { computed, h } from 'vue';
 import { NDataTable, NTag, NSpace, NButton, NSwitch, NTooltip, NIcon } from 'naive-ui';
 import type { DataTableColumns } from 'naive-ui';
-import { TrashOutline, CheckmarkCircleOutline, AlertCircleOutline } from '@vicons/ionicons5';
+import { TrashOutline, RefreshOutline, CheckmarkCircleOutline, AlertCircleOutline } from '@vicons/ionicons5';
 import { formatDateTime, daysUntil } from '@/utils/date';
 import { usePermission } from '@/hooks/usePermission';
 
@@ -10,14 +10,17 @@ interface Props {
   data: Api.Certificate[];
   loading: boolean;
   deletingIds?: Set<string>;
+  renewingIds?: Set<string>;
 }
 
 interface Emits {
   (e: 'delete', row: Api.Certificate): void;
+  (e: 'renew', row: Api.Certificate): void;
 }
 
 const props = withDefaults(defineProps<Props>(), {
   deletingIds: () => new Set<string>(),
+  renewingIds: () => new Set<string>(),
 });
 const emit = defineEmits<Emits>();
 
@@ -42,6 +45,21 @@ function getDaysLabel(days: number): string {
   if (days <= 0) return '已过期';
   if (days <= 15) return '即将过期';
   return '正常';
+}
+
+function renewStatusType(status: string): 'default' | 'success' | 'warning' | 'error' {
+  if (status === 'success') return 'success';
+  if (status === 'renewing') return 'warning';
+  if (status.startsWith('failed')) return 'error';
+  return 'default';
+}
+
+function renewStatusLabel(status: string): string {
+  if (!status) return '未续签';
+  if (status === 'success') return '成功';
+  if (status === 'renewing') return '续签中';
+  if (status.startsWith('failed')) return '失败';
+  return status;
 }
 
 const columns = computed<DataTableColumns<Api.Certificate>>(() => {
@@ -131,6 +149,26 @@ const columns = computed<DataTableColumns<Api.Certificate>>(() => {
       },
     },
     {
+      title: '续签状态',
+      key: 'renew_status',
+      width: 100,
+      render(row) {
+        const status = row.renew_status || '';
+        const tag = h(
+          NTag,
+          { type: renewStatusType(status), size: 'small', bordered: false },
+          () => renewStatusLabel(status)
+        );
+        if (!status.startsWith('failed')) {
+          return tag;
+        }
+        return h(NTooltip, { trigger: 'hover' }, {
+          trigger: () => tag,
+          default: () => status,
+        });
+      },
+    },
+    {
       title: '关联机器',
       key: 'machine_count',
       width: 90,
@@ -138,16 +176,44 @@ const columns = computed<DataTableColumns<Api.Certificate>>(() => {
     },
   ];
 
-  // 写权限时显示操作列（只有删除，后端没有 renew 接口）
+  // 写权限时显示操作列。
   if (canWrite()) {
     cols.push({
       title: '操作',
       key: 'actions',
-      width: 80,
+      width: 120,
       fixed: 'right',
       render(row) {
         const isDeleting = props.deletingIds.has(row.id);
+        const isRenewing = props.renewingIds.has(row.id);
+        const canRenew = row.source === 'certbot_cloudflare_dns';
         return h(NSpace, { size: 8 }, () => [
+          ...(canRenew
+            ? [
+              h(
+                NTooltip,
+                { trigger: 'hover' },
+                {
+                  trigger: () =>
+                    h(
+                      NButton,
+                      {
+                        size: 'small',
+                        quaternary: true,
+                        type: 'primary',
+                        loading: isRenewing,
+                        disabled: isRenewing || isDeleting,
+                        onClick: () => emit('renew', row),
+                      },
+                      {
+                        icon: () => h(NIcon, null, () => h(RefreshOutline)),
+                      }
+                    ),
+                  default: () => '立即续签',
+                }
+              ),
+            ]
+            : []),
           h(
             NTooltip,
             { trigger: 'hover' },
@@ -160,7 +226,7 @@ const columns = computed<DataTableColumns<Api.Certificate>>(() => {
                     quaternary: true,
                     type: 'error',
                     loading: isDeleting,
-                    disabled: isDeleting,
+                    disabled: isDeleting || isRenewing,
                     onClick: () => emit('delete', row),
                   },
                   {
@@ -184,7 +250,7 @@ const columns = computed<DataTableColumns<Api.Certificate>>(() => {
     :columns="columns"
     :data="props.data"
     :loading="props.loading"
-    :scroll-x="900"
+    :scroll-x="1100"
     :bordered="false"
     size="small"
   />

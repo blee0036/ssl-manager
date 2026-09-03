@@ -160,6 +160,9 @@ func (s *CertificateService) Create(ctx context.Context, input model.CreateCertI
 
 	// Save certificate files
 	if err := s.certRepo.SaveCertFiles(cert.ID, input.CertPEM, input.ChainPEM, fullchainPEM, input.KeyPEM); err != nil {
+		if cleanupErr := s.certRepo.Delete(ctx, cert.ID); cleanupErr != nil {
+			return nil, fmt.Errorf("failed to save certificate files: %w; failed to remove incomplete certificate: %v", err, cleanupErr)
+		}
 		return nil, fmt.Errorf("failed to save certificate files: %w", err)
 	}
 

@@ -36,6 +36,15 @@ export function deleteCertificate(id: string) {
   return request.delete<Api.Response<any>>(`/api/certificates/${id}`, { skipErrorNotify: true } as any);
 }
 
+/** 手动续签 Cloudflare DNS 证书 */
+export function renewCertificate(id: string) {
+  return request.post<Api.Response<Api.Certificate>>(
+    `/api/certificates/${id}/renew`,
+    undefined,
+    { skipErrorNotify: true }
+  );
+}
+
 /** 获取第三方 DNS 列表（用于 Cloudflare 签发时选择 DNS 配置） */
 export function getThirdpartDnsList() {
   return request.get<Api.Response<Api.ThirdpartDns[]>>('/api/thirdpart-dns');

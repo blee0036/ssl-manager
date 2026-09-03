@@ -398,6 +398,124 @@ func TestCheckRenewals_CloudflareDNS_FailureWithRetry(t *testing.T) {
 	}
 }
 
+func TestCheckRenewals_RetriesFailedCertificateOutsideExpiryThreshold(t *testing.T) {
+	scheduler, db, _, _, _, renewer := setupSchedulerTest(t)
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := db.Exec(`INSERT INTO thirdpart_dns (id, name, type, api_token, config_json, main_domains, enabled, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"dns-retry", "Cloudflare", "cloudflare", "cf-token", "{}", "[]", 1, now, now)
+	if err != nil {
+		t.Fatalf("failed to insert thirdpart_dns: %v", err)
+	}
+
+	// This certificate is intentionally outside the normal 15-day renewal
+	// threshold. Its persisted failure from more than a day ago must still make
+	// it a retry target.
+	insertCertDirectly(t, db, "cert-retry", "Retry Cert", "certbot_cloudflare_dns",
+		[]string{"retry.example.com"}, time.Now().Add(60*24*time.Hour), true, "dns-retry")
+	_, err = db.Exec(`UPDATE certificates SET renew_status = ?, updated_at = ? WHERE id = ?`,
+		"failed: manual renewal failed: temporary DNS error",
+		time.Now().UTC().Add(-25*time.Hour).Format(time.RFC3339),
+		"cert-retry")
+	if err != nil {
+		t.Fatalf("failed to mark certificate renewal as failed: %v", err)
+	}
+
+	newCertPEM, newKeyPEM := generateSchedulerTestCert(t, []string{"retry.example.com"}, 90*24*time.Hour)
+	renewer.result = &certbot.CertbotResult{
+		CertFiles: &certbot.CertFiles{
+			CertPEM:       newCertPEM,
+			ChainPEM:      newCertPEM,
+			FullchainPEM:  newCertPEM,
+			PrivateKeyPEM: newKeyPEM,
+		},
+	}
+
+	if err := scheduler.CheckRenewals(context.Background()); err != nil {
+		t.Fatalf("CheckRenewals failed: %v", err)
+	}
+	if renewer.calls != 1 {
+		t.Errorf("expected 1 retry attempt, got %d", renewer.calls)
+	}
+
+	var renewStatus string
+	if err := db.QueryRow("SELECT renew_status FROM certificates WHERE id = ?", "cert-retry").Scan(&renewStatus); err != nil {
+		t.Fatalf("failed to query renew_status: %v", err)
+	}
+	if renewStatus != "success" {
+		t.Errorf("expected renew_status 'success', got %q", renewStatus)
+	}
+}
+
+func TestCheckRenewals_DoesNotRetryRecentFailure(t *testing.T) {
+	scheduler, db, _, _, _, renewer := setupSchedulerTest(t)
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := db.Exec(`INSERT INTO thirdpart_dns (id, name, type, api_token, config_json, main_domains, enabled, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"dns-recent-failure", "Cloudflare", "cloudflare", "cf-token", "{}", "[]", 1, now, now)
+	if err != nil {
+		t.Fatalf("failed to insert thirdpart_dns: %v", err)
+	}
+
+	insertCertDirectly(t, db, "cert-recent-failure", "Recent Failure Cert", "certbot_cloudflare_dns",
+		[]string{"recent-failure.example.com"}, time.Now().Add(5*24*time.Hour), true, "dns-recent-failure")
+	_, err = db.Exec(`UPDATE certificates SET renew_status = ?, updated_at = ? WHERE id = ?`,
+		"failed: renewal failed after 4 attempts: temporary DNS error",
+		time.Now().UTC().Add(-23*time.Hour).Format(time.RFC3339),
+		"cert-recent-failure")
+	if err != nil {
+		t.Fatalf("failed to mark certificate renewal as recently failed: %v", err)
+	}
+
+	if err := scheduler.CheckRenewals(context.Background()); err != nil {
+		t.Fatalf("CheckRenewals failed: %v", err)
+	}
+	if renewer.calls != 0 {
+		t.Errorf("expected no retry before 24 hours, got %d attempts", renewer.calls)
+	}
+}
+
+func TestRenewCertificate_ManualCloudflareRenewal(t *testing.T) {
+	scheduler, db, _, _, _, renewer := setupSchedulerTest(t)
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := db.Exec(`INSERT INTO thirdpart_dns (id, name, type, api_token, config_json, main_domains, enabled, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"dns-manual", "Cloudflare", "cloudflare", "cf-token", "{}", "[]", 1, now, now)
+	if err != nil {
+		t.Fatalf("failed to insert thirdpart_dns: %v", err)
+	}
+
+	insertCertDirectly(t, db, "cert-manual-renew", "Manual Renew Cert", "certbot_cloudflare_dns",
+		[]string{"manual-renew.example.com"}, time.Now().Add(60*24*time.Hour), false, "dns-manual")
+
+	newCertPEM, newKeyPEM := generateSchedulerTestCert(t, []string{"manual-renew.example.com"}, 90*24*time.Hour)
+	renewer.result = &certbot.CertbotResult{
+		CertFiles: &certbot.CertFiles{
+			CertPEM:       newCertPEM,
+			ChainPEM:      newCertPEM,
+			FullchainPEM:  newCertPEM,
+			PrivateKeyPEM: newKeyPEM,
+		},
+	}
+
+	cert, err := scheduler.RenewCertificate(context.Background(), "cert-manual-renew")
+	if err != nil {
+		t.Fatalf("RenewCertificate failed: %v", err)
+	}
+	if renewer.calls != 1 {
+		t.Errorf("expected 1 manual renewal attempt, got %d", renewer.calls)
+	}
+	if cert.RenewStatus != "success" {
+		t.Errorf("expected renew_status 'success', got %q", cert.RenewStatus)
+	}
+	if cert.LastRenewAt == nil {
+		t.Error("expected last_renew_at to be set")
+	}
+}
+
 func TestCheckRenewals_CloudflareDNS_MarksPendingSync(t *testing.T) {
 	scheduler, db, certRepo, _, _, renewer := setupSchedulerTest(t)
 

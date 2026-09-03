@@ -84,6 +84,9 @@ func (r *CertificateRepository) Create(ctx context.Context, cert *model.Certific
 	// Create the certificate file directory
 	dirPath := r.CertDirPath(cert.ID)
 	if err := os.MkdirAll(dirPath, 0755); err != nil {
+		if _, cleanupErr := r.db.ExecContext(ctx, "DELETE FROM certificates WHERE id = ?", cert.ID); cleanupErr != nil {
+			return fmt.Errorf("failed to create certificate directory: %w; failed to remove certificate record: %v", err, cleanupErr)
+		}
 		return fmt.Errorf("failed to create certificate directory: %w", err)
 	}
 
@@ -352,6 +355,43 @@ func (r *CertificateRepository) ListExpiringSoon(ctx context.Context, days int) 
 	return certs, nil
 }
 
+// ListFailedAutoRenewal returns Cloudflare DNS certificates whose previous
+// automatic renewal failed at or before retryBefore. Their updated_at value is
+// written together with the failed status and therefore acts as the persisted
+// timestamp for the once-per-day retry schedule.
+func (r *CertificateRepository) ListFailedAutoRenewal(ctx context.Context, retryBefore time.Time) ([]*model.Certificate, error) {
+	query := `SELECT id, name, domains, source, expire_at, auto_renew, issuer,
+		fingerprint_sha256, chain_valid, cert_dir_path, thirdpart_dns_id,
+		last_renew_at, renew_status, created_at, updated_at
+	FROM certificates
+	WHERE auto_renew = 1
+		AND source = 'certbot_cloudflare_dns'
+		AND (renew_status = 'failed' OR renew_status LIKE 'failed:%')
+		AND updated_at <= ?
+	ORDER BY updated_at ASC`
+
+	rows, err := r.db.QueryContext(ctx, query, retryBefore.UTC().Format(time.RFC3339))
+	if err != nil {
+		return nil, fmt.Errorf("failed to query failed auto-renewal certificates: %w", err)
+	}
+	defer rows.Close()
+
+	var certs []*model.Certificate
+	for rows.Next() {
+		cert, err := r.scanCertificateFromRows(rows)
+		if err != nil {
+			return nil, err
+		}
+		certs = append(certs, cert)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating failed auto-renewal certificate rows: %w", err)
+	}
+
+	return certs, nil
+}
+
 // scanCertificate scans a single row into a Certificate model.
 func (r *CertificateRepository) scanCertificate(row *sql.Row) (*model.Certificate, error) {
 	var cert model.Certificate
@@ -461,5 +501,3 @@ func (r *CertificateRepository) populateCertificate(
 
 	return cert, nil
 }
-
-

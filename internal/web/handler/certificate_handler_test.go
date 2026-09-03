@@ -97,6 +97,15 @@ func (m *mockAuthService) IsTokenValid(ctx context.Context, userID string, issue
 	return true
 }
 
+type mockCertificateRenewer struct {
+	cert *model.Certificate
+	err  error
+}
+
+func (m *mockCertificateRenewer) RenewCertificate(_ context.Context, _ string) (*model.Certificate, error) {
+	return m.cert, m.err
+}
+
 // setupCertHandler creates a CertificateHandler with test dependencies.
 func setupCertHandler(t *testing.T) (*CertificateHandler, *chi.Mux, string) {
 	t.Helper()
@@ -117,6 +126,7 @@ func setupCertHandler(t *testing.T) (*CertificateHandler, *chi.Mux, string) {
 		r.Get("/{id}", handler.GetByID)
 		r.Put("/{id}", handler.Update)
 		r.Delete("/{id}", handler.Delete)
+		r.Post("/{id}/renew", handler.Renew)
 	})
 
 	return handler, r, dataDir
@@ -226,6 +236,55 @@ func TestCertificateHandler_Delete_NotFound(t *testing.T) {
 
 	if w.Code != http.StatusNotFound {
 		t.Errorf("expected status 404, got %d", w.Code)
+	}
+}
+
+func TestCertificateHandler_Renew_Success(t *testing.T) {
+	handler, r, _ := setupCertHandler(t)
+	now := time.Now().UTC()
+	handler.SetCertificateRenewer(&mockCertificateRenewer{
+		cert: &model.Certificate{
+			ID:                "renewed-cert",
+			Name:              "Renewed Certificate",
+			Domains:           []string{"example.com"},
+			Source:            "certbot_cloudflare_dns",
+			ExpireAt:          now.Add(90 * 24 * time.Hour),
+			AutoRenew:         true,
+			Issuer:            "Let's Encrypt",
+			FingerprintSHA256: "fingerprint",
+			ChainValid:        true,
+			RenewStatus:       "success",
+			CreatedAt:         now,
+			UpdatedAt:         now,
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/certificates/renewed-cert/renew", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	var resp model.SuccessResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+	if resp.Message != "certificate renewed" {
+		t.Errorf("expected renewal success message, got %q", resp.Message)
+	}
+}
+
+func TestCertificateHandler_Renew_NotConfigured(t *testing.T) {
+	_, r, _ := setupCertHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/certificates/test-cert/renew", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected status 503, got %d", w.Code)
 	}
 }
 

@@ -60,6 +60,30 @@ func TestCertRepository_Create(t *testing.T) {
 	}
 }
 
+func TestCertRepository_Create_CleansUpRecordWhenDirectoryCreationFails(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+
+	blockingFile := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(blockingFile, []byte("blocker"), 0600); err != nil {
+		t.Fatalf("failed to create blocking file: %v", err)
+	}
+	repo := NewCertificateRepository(db, blockingFile)
+	cert := newTestCertificate()
+
+	if err := repo.Create(ctx, cert); err == nil {
+		t.Fatal("expected Create to fail when the certificate directory cannot be created")
+	}
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM certificates WHERE id = ?`, cert.ID).Scan(&count); err != nil {
+		t.Fatalf("failed to count certificate records: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("expected incomplete certificate record to be removed, got %d record(s)", count)
+	}
+}
+
 func TestCertRepository_GetByID(t *testing.T) {
 	db := setupTestDB(t)
 	tmpDir := t.TempDir()

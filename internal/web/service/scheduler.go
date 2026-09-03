@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -52,6 +53,15 @@ type CertbotRenewer interface {
 	IssueCertCloudflare(ctx context.Context, domains []string, email string, cloudflareToken string) (*certbot.CertbotResult, error)
 }
 
+var (
+	// ErrCertificateRenewalInProgress prevents concurrent scheduler and manual
+	// renewal attempts from writing the same certificate files at once.
+	ErrCertificateRenewalInProgress = errors.New("certificate renewal is already in progress")
+	// ErrManualRenewalUnsupported is returned when a certificate cannot be
+	// renewed directly through the Cloudflare DNS Certbot flow.
+	ErrManualRenewalUnsupported = errors.New("manual renewal is only supported for Cloudflare DNS certificates")
+)
+
 // SchedulerService handles periodic tasks: certificate renewal checks,
 // heartbeat timeout detection, and domain monitoring.
 type SchedulerService struct {
@@ -97,6 +107,9 @@ type SchedulerService struct {
 	// Retry configuration
 	MaxRetries    int
 	RetryInterval time.Duration
+
+	renewalMu sync.Mutex
+	renewing  map[string]struct{}
 }
 
 // NewSchedulerService creates a new SchedulerService.
@@ -690,7 +703,9 @@ func (s *SchedulerService) CheckRenewals(ctx context.Context) error {
 		}
 	}
 
-	// Second pass: handle renewals for auto_renew certs only
+	// Second pass: handle expiring certificates that require an action.
+	renewalCandidates := make([]*model.Certificate, 0)
+	renewalCandidateIDs := make(map[string]struct{})
 	for _, cert := range certs {
 		if !cert.AutoRenew {
 			continue
@@ -704,7 +719,13 @@ func (s *SchedulerService) CheckRenewals(ctx context.Context) error {
 
 		switch cert.Source {
 		case "certbot_cloudflare_dns":
-			s.handleCloudflareRenewal(ctx, cert)
+			if isFailedRenewalStatus(cert.RenewStatus) {
+				// Failed renewals use the persisted once-per-day retry path below,
+				// even when the certificate is inside the normal expiry window.
+				continue
+			}
+			renewalCandidates = append(renewalCandidates, cert)
+			renewalCandidateIDs[cert.ID] = struct{}{}
 		case "certbot_manual_dns":
 			s.handleManualDNSReminder(ctx, cert)
 		case "upload":
@@ -713,11 +734,44 @@ func (s *SchedulerService) CheckRenewals(ctx context.Context) error {
 		}
 	}
 
+	// Retry a failed Cloudflare renewal only after a full day. updateRenewStatus
+	// persists the failure time in updated_at, so this survives process restarts
+	// without adding an in-memory timer or a new database column.
+	retryBefore := time.Now().UTC().Add(-24 * time.Hour)
+	failedCerts, err := s.certRepo.ListFailedAutoRenewal(ctx, retryBefore)
+	if err != nil {
+		return fmt.Errorf("failed to list failed automatic renewals: %w", err)
+	}
+	for _, cert := range failedCerts {
+		if _, exists := renewalCandidateIDs[cert.ID]; exists {
+			continue
+		}
+		renewalCandidates = append(renewalCandidates, cert)
+		renewalCandidateIDs[cert.ID] = struct{}{}
+	}
+
+	for _, cert := range renewalCandidates {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		s.handleCloudflareRenewal(ctx, cert)
+	}
+
 	return nil
 }
 
 // handleCloudflareRenewal attempts to auto-renew a certificate using Certbot + Cloudflare DNS.
 func (s *SchedulerService) handleCloudflareRenewal(ctx context.Context, cert *model.Certificate) {
+	if !s.beginRenewal(cert.ID) {
+		log.Printf("[Scheduler] Skipping renewal for certificate %s because another renewal is in progress", cert.ID)
+		return
+	}
+	defer s.finishRenewal(cert.ID)
+
+	s.updateRenewStatus(ctx, cert.ID, "renewing")
+
 	var lastErr error
 
 	for attempt := 0; attempt <= s.MaxRetries; attempt++ {
@@ -733,15 +787,7 @@ func (s *SchedulerService) handleCloudflareRenewal(ctx context.Context, cert *mo
 
 		err := s.renewCloudflare(ctx, cert)
 		if err == nil {
-			// Renewal succeeded
-			s.updateRenewStatus(ctx, cert.ID, "success")
-			log.Printf("[Scheduler] Successfully renewed certificate %s", cert.ID)
-			// Auto-resolve any expiring/expired alerts for this certificate
-			if s.alertSender != nil {
-				s.alertSender.AutoResolve(ctx, "certificate", cert.ID, "cert_expiring")
-				s.alertSender.AutoResolve(ctx, "certificate", cert.ID, "cert_expired")
-				s.alertSender.AutoResolve(ctx, "certificate", cert.ID, "cert_renew_failed")
-			}
+			s.recordRenewalSuccess(ctx, cert, "automatically")
 			return
 		}
 
@@ -759,6 +805,72 @@ func (s *SchedulerService) handleCloudflareRenewal(ctx context.Context, cert *mo
 			log.Printf("[Scheduler] Failed to send renewal failure alert: %v", err)
 		}
 	}
+}
+
+// RenewCertificate manually renews one Cloudflare DNS certificate immediately.
+// It performs one Certbot attempt so the HTTP request does not block through
+// the scheduler's delayed retry loop; a failure is persisted and retried by
+// the scheduler no sooner than 24 hours later.
+func (s *SchedulerService) RenewCertificate(ctx context.Context, certID string) (*model.Certificate, error) {
+	cert, err := s.certRepo.GetByID(ctx, certID)
+	if err != nil {
+		return nil, err
+	}
+	if cert.Source != "certbot_cloudflare_dns" {
+		return nil, ErrManualRenewalUnsupported
+	}
+	if !s.beginRenewal(cert.ID) {
+		return nil, ErrCertificateRenewalInProgress
+	}
+	defer s.finishRenewal(cert.ID)
+
+	s.updateRenewStatus(ctx, cert.ID, "renewing")
+	if err := s.renewCloudflare(ctx, cert); err != nil {
+		s.updateRenewStatus(ctx, cert.ID, "failed: manual renewal failed: "+err.Error())
+		return nil, fmt.Errorf("manual renewal failed: %w", err)
+	}
+
+	s.recordRenewalSuccess(ctx, cert, "manually")
+	renewedCert, err := s.certRepo.GetByID(ctx, cert.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get renewed certificate: %w", err)
+	}
+	return renewedCert, nil
+}
+
+func (s *SchedulerService) beginRenewal(certID string) bool {
+	s.renewalMu.Lock()
+	defer s.renewalMu.Unlock()
+
+	if s.renewing == nil {
+		s.renewing = make(map[string]struct{})
+	}
+	if _, exists := s.renewing[certID]; exists {
+		return false
+	}
+	s.renewing[certID] = struct{}{}
+	return true
+}
+
+func (s *SchedulerService) finishRenewal(certID string) {
+	s.renewalMu.Lock()
+	defer s.renewalMu.Unlock()
+	delete(s.renewing, certID)
+}
+
+func (s *SchedulerService) recordRenewalSuccess(ctx context.Context, cert *model.Certificate, mode string) {
+	s.updateRenewStatus(ctx, cert.ID, "success")
+	log.Printf("[Scheduler] Successfully %s renewed certificate %s", mode, cert.ID)
+	if s.alertSender == nil {
+		return
+	}
+	s.alertSender.AutoResolve(ctx, "certificate", cert.ID, "cert_expiring")
+	s.alertSender.AutoResolve(ctx, "certificate", cert.ID, "cert_expired")
+	s.alertSender.AutoResolve(ctx, "certificate", cert.ID, "cert_renew_failed")
+}
+
+func isFailedRenewalStatus(status string) bool {
+	return status == "failed" || strings.HasPrefix(status, "failed:")
 }
 
 // renewCloudflare performs the actual Certbot Cloudflare DNS renewal.

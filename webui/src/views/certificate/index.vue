@@ -15,8 +15,8 @@ import {
   DocumentTextOutline,
   RefreshOutline,
 } from '@vicons/ionicons5';
-import { getCertificates, deleteCertificate } from '@/service/api/certificate';
-import { adaptListResponse } from '@/service/request';
+import { getCertificates, deleteCertificate, renewCertificate } from '@/service/api/certificate';
+import { adaptListResponse, adaptResponse } from '@/service/request';
 import CertTable from './components/CertTable.vue';
 import UploadDialog from './components/UploadDialog.vue';
 import CloudflareIssueDialog from './components/CloudflareIssueDialog.vue';
@@ -34,6 +34,7 @@ const error = ref('');
 
 // Per-row loading Sets
 const deletingIds = reactive(new Set<string>());
+const renewingIds = reactive(new Set<string>());
 
 /** 弹窗控制 */
 const showUploadDialog = ref(false);
@@ -73,6 +74,29 @@ function handleDelete(row: Api.Certificate) {
         message.error(getApiErrorMessage(err, '删除失败'));
       } finally {
         deletingIds.delete(row.id);
+      }
+    },
+  });
+}
+
+/** 手动续签 Cloudflare DNS 证书 */
+function handleRenew(row: Api.Certificate) {
+  dialog.warning({
+    title: '确认续签',
+    content: `立即续签证书「${row.name}」？成功后会覆盖当前证书文件，并将关联机器标记为待同步。`,
+    positiveText: '续签',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      renewingIds.add(row.id);
+      try {
+        const response = await renewCertificate(row.id);
+        adaptResponse<Api.Certificate>(response.data);
+        message.success('证书续签成功');
+        await fetchCertificates();
+      } catch (err: unknown) {
+        message.error(getApiErrorMessage(err, '证书续签失败'));
+      } finally {
+        renewingIds.delete(row.id);
       }
     },
   });
@@ -154,7 +178,9 @@ onMounted(() => {
         :data="certList"
         :loading="loading"
         :deleting-ids="deletingIds"
+        :renewing-ids="renewingIds"
         @delete="handleDelete"
+        @renew="handleRenew"
       />
       <!-- 空状态 -->
       <EmptyState v-if="!loading && certList.length === 0" description="暂无证书数据" />
