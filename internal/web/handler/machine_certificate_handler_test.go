@@ -43,6 +43,24 @@ func setupMCTestDB(t *testing.T) *sql.DB {
 		t.Fatalf("failed to create machine_certificates table: %v", err)
 	}
 
+	tables := []string{
+		`CREATE TABLE deployment_logs (
+			id TEXT PRIMARY KEY,
+			machine_certificate_id TEXT NOT NULL,
+			machine_id TEXT NOT NULL,
+			certificate_id TEXT NOT NULL
+		)`,
+		`CREATE TABLE domains (
+			id TEXT PRIMARY KEY,
+			linked_machine_certificate_id TEXT DEFAULT ''
+		)`,
+	}
+	for _, stmt := range tables {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("failed to create related test table: %v", err)
+		}
+	}
+
 	t.Cleanup(func() { db.Close() })
 	return db
 }
@@ -188,9 +206,9 @@ func TestMachineCertificateHandler_Create_Success(t *testing.T) {
 	_, r, _ := setupMCHandler(t)
 
 	body := map[string]interface{}{
-		"certificate_id":      "cert-1",
-		"cert_path":           "/etc/ssl/cert.pem",
-		"private_key_path":    "/etc/ssl/privkey.pem",
+		"certificate_id":       "cert-1",
+		"cert_path":            "/etc/ssl/cert.pem",
+		"private_key_path":     "/etc/ssl/privkey.pem",
 		"post_deploy_commands": "systemctl reload nginx",
 	}
 	bodyBytes, _ := json.Marshal(body)

@@ -71,6 +71,16 @@ func setupMachineCertServiceTestDB(t *testing.T) *sql.DB {
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS deployment_logs (
+			id TEXT PRIMARY KEY,
+			machine_certificate_id TEXT NOT NULL,
+			machine_id TEXT NOT NULL,
+			certificate_id TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS domains (
+			id TEXT PRIMARY KEY,
+			linked_machine_certificate_id TEXT DEFAULT ''
+		)`,
 	}
 
 	for _, stmt := range tables {

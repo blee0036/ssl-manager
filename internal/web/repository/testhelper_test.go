@@ -80,6 +80,38 @@ func setupTestDB(t *testing.T) *sql.DB {
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS deployment_logs (
+			id TEXT PRIMARY KEY,
+			machine_certificate_id TEXT NOT NULL,
+			machine_id TEXT NOT NULL,
+			certificate_id TEXT NOT NULL,
+			status TEXT NOT NULL CHECK(status IN ('success', 'failed', 'skipped')),
+			cert_fingerprint_sha256 TEXT NOT NULL,
+			cert_path TEXT NOT NULL,
+			private_key_path TEXT NOT NULL,
+			command_outputs TEXT DEFAULT '',
+			error_message TEXT DEFAULT '',
+			started_at TEXT NOT NULL,
+			finished_at TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS domains (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			source TEXT DEFAULT 'manual' CHECK(source IN ('manual', 'certificate', 'cloudflare')),
+			thirdpart_dns_id TEXT DEFAULT '',
+			dns_record_id TEXT DEFAULT '',
+			dns_record_type TEXT DEFAULT '',
+			dns_record_value TEXT DEFAULT '',
+			monitor_port INTEGER NOT NULL DEFAULT 443,
+			linked_machine_id TEXT,
+			linked_certificate_id TEXT,
+			linked_machine_certificate_id TEXT,
+			monitor_enabled INTEGER NOT NULL DEFAULT 1,
+			alert_ignored INTEGER NOT NULL DEFAULT 0,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
 	}
 
 	for _, stmt := range tables {

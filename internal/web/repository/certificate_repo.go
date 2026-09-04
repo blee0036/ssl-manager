@@ -229,9 +229,51 @@ func (r *CertificateRepository) Update(ctx context.Context, id string, updates m
 	return nil
 }
 
-// Delete deletes certificate metadata and its file directory.
+// Delete deletes a certificate, its deployment data, and its file directory.
 func (r *CertificateRepository) Delete(ctx context.Context, id string) error {
-	result, err := r.db.ExecContext(ctx, "DELETE FROM certificates WHERE id = ?", id)
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to start certificate deletion transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM deployment_logs
+		 WHERE certificate_id = ?
+		    OR machine_certificate_id IN (
+				SELECT id FROM machine_certificates WHERE certificate_id = ?
+			)`,
+		id, id,
+	); err != nil {
+		return fmt.Errorf("failed to delete certificate deployment logs: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE domains
+		 SET linked_certificate_id = CASE
+				WHEN linked_certificate_id = ? THEN ''
+				ELSE linked_certificate_id
+			END,
+			linked_machine_certificate_id = CASE
+				WHEN linked_machine_certificate_id IN (
+					SELECT id FROM machine_certificates WHERE certificate_id = ?
+				) THEN ''
+				ELSE linked_machine_certificate_id
+			END
+		 WHERE linked_certificate_id = ?
+		    OR linked_machine_certificate_id IN (
+				SELECT id FROM machine_certificates WHERE certificate_id = ?
+			)`,
+		id, id, id, id,
+	); err != nil {
+		return fmt.Errorf("failed to clear certificate domain links: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, "DELETE FROM machine_certificates WHERE certificate_id = ?", id); err != nil {
+		return fmt.Errorf("failed to delete certificate deployment configurations: %w", err)
+	}
+
+	result, err := tx.ExecContext(ctx, "DELETE FROM certificates WHERE id = ?", id)
 	if err != nil {
 		return fmt.Errorf("failed to delete certificate: %w", err)
 	}
@@ -243,6 +285,10 @@ func (r *CertificateRepository) Delete(ctx context.Context, id string) error {
 
 	if rowsAffected == 0 {
 		return sql.ErrNoRows
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit certificate deletion: %w", err)
 	}
 
 	// Remove the certificate file directory

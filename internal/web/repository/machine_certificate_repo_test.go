@@ -71,6 +71,18 @@ func setupMachineCertTestDB(t *testing.T) *sql.DB {
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS deployment_logs (
+			id TEXT PRIMARY KEY,
+			machine_certificate_id TEXT NOT NULL REFERENCES machine_certificates(id),
+			machine_id TEXT NOT NULL,
+			certificate_id TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS domains (
+			id TEXT PRIMARY KEY,
+			linked_machine_id TEXT DEFAULT '',
+			linked_certificate_id TEXT DEFAULT '',
+			linked_machine_certificate_id TEXT DEFAULT ''
+		)`,
 	}
 
 	for _, stmt := range tables {
@@ -334,6 +346,59 @@ func TestMachineCertificateRepository_Delete(t *testing.T) {
 	_, err = repo.GetByID(ctx, mc.ID)
 	if err != sql.ErrNoRows {
 		t.Errorf("expected machine certificate to be deleted, got err=%v", err)
+	}
+}
+
+func TestMachineCertificateRepository_Delete_CascadesDeploymentData(t *testing.T) {
+	db := setupMachineCertTestDB(t)
+	repo := NewMachineCertificateRepository(db)
+	ctx := context.Background()
+
+	mc := &model.MachineCertificate{
+		MachineID:      "machine-1",
+		CertificateID:  "cert-1",
+		CertPath:       "/etc/ssl/cert.pem",
+		PrivateKeyPath: "/etc/ssl/key.pem",
+	}
+	if err := repo.Create(ctx, mc); err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		"INSERT INTO deployment_logs (id, machine_certificate_id, machine_id, certificate_id) VALUES (?, ?, ?, ?)",
+		"log-1", mc.ID, mc.MachineID, mc.CertificateID,
+	); err != nil {
+		t.Fatalf("failed to insert deployment log: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		"INSERT INTO domains (id, linked_machine_certificate_id) VALUES (?, ?)",
+		"domain-1", mc.ID,
+	); err != nil {
+		t.Fatalf("failed to insert domain: %v", err)
+	}
+
+	if err := repo.Delete(ctx, mc.ID); err != nil {
+		t.Fatalf("Delete failed: %v", err)
+	}
+
+	for _, table := range []string{"machine_certificates", "deployment_logs"} {
+		var count int
+		if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table).Scan(&count); err != nil {
+			t.Fatalf("failed to count %s: %v", table, err)
+		}
+		if count != 0 {
+			t.Errorf("expected %s to be empty after deletion, got %d row(s)", table, count)
+		}
+	}
+
+	var linkedMachineCertificateID string
+	if err := db.QueryRowContext(ctx,
+		"SELECT linked_machine_certificate_id FROM domains WHERE id = ?",
+		"domain-1",
+	).Scan(&linkedMachineCertificateID); err != nil {
+		t.Fatalf("failed to query domain link: %v", err)
+	}
+	if linkedMachineCertificateID != "" {
+		t.Errorf("expected machine certificate domain link to be cleared, got %q", linkedMachineCertificateID)
 	}
 }
 

@@ -127,9 +127,26 @@ func (r *MachineCertificateRepository) Update(ctx context.Context, id string, in
 	return current, nil
 }
 
-// Delete deletes a machine certificate deployment config.
+// Delete deletes a machine certificate deployment config and its deployment logs.
 func (r *MachineCertificateRepository) Delete(ctx context.Context, id string) error {
-	result, err := r.db.ExecContext(ctx, "DELETE FROM machine_certificates WHERE id = ?", id)
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to start machine certificate deletion transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, "DELETE FROM deployment_logs WHERE machine_certificate_id = ?", id); err != nil {
+		return fmt.Errorf("failed to delete machine certificate deployment logs: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		"UPDATE domains SET linked_machine_certificate_id = '' WHERE linked_machine_certificate_id = ?",
+		id,
+	); err != nil {
+		return fmt.Errorf("failed to clear machine certificate domain links: %w", err)
+	}
+
+	result, err := tx.ExecContext(ctx, "DELETE FROM machine_certificates WHERE id = ?", id)
 	if err != nil {
 		return fmt.Errorf("failed to delete machine certificate: %w", err)
 	}
@@ -140,6 +157,10 @@ func (r *MachineCertificateRepository) Delete(ctx context.Context, id string) er
 	}
 	if rowsAffected == 0 {
 		return sql.ErrNoRows
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit machine certificate deletion: %w", err)
 	}
 	return nil
 }

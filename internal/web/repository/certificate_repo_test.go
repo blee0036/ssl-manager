@@ -277,6 +277,76 @@ func TestCertRepository_Delete(t *testing.T) {
 	}
 }
 
+func TestCertRepository_Delete_CascadesDeploymentData(t *testing.T) {
+	db := setupTestDB(t)
+	tmpDir := t.TempDir()
+	repo := NewCertificateRepository(db, tmpDir)
+	ctx := context.Background()
+
+	cert := newTestCertificate()
+	if err := repo.Create(ctx, cert); err != nil {
+		t.Fatalf("Create certificate failed: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO machines (id, name, ip, agent_token_hash, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		"machine-1", "test-machine", "10.0.0.1", "hash", "2024-01-01T00:00:00Z", "2024-01-01T00:00:00Z",
+	); err != nil {
+		t.Fatalf("failed to insert machine: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO machine_certificates (id, machine_id, certificate_id, cert_path, private_key_path, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		"mc-1", "machine-1", cert.ID, "/etc/ssl/cert.pem", "/etc/ssl/key.pem", "2024-01-01T00:00:00Z", "2024-01-01T00:00:00Z",
+	); err != nil {
+		t.Fatalf("failed to insert machine certificate: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO deployment_logs (
+			id, machine_certificate_id, machine_id, certificate_id, status,
+			cert_fingerprint_sha256, cert_path, private_key_path, started_at, finished_at, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"log-1", "mc-1", "machine-1", cert.ID, "success",
+		"fingerprint", "/etc/ssl/cert.pem", "/etc/ssl/key.pem",
+		"2024-01-01T00:00:00Z", "2024-01-01T00:00:00Z", "2024-01-01T00:00:00Z",
+	); err != nil {
+		t.Fatalf("failed to insert deployment log: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO domains (
+			id, name, linked_machine_id, linked_certificate_id, linked_machine_certificate_id, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		"domain-1", "example.com", "machine-keep", cert.ID, "mc-1", "2024-01-01T00:00:00Z", "2024-01-01T00:00:00Z",
+	); err != nil {
+		t.Fatalf("failed to insert domain: %v", err)
+	}
+
+	if err := repo.Delete(ctx, cert.ID); err != nil {
+		t.Fatalf("Delete failed: %v", err)
+	}
+
+	for _, table := range []string{"certificates", "machine_certificates", "deployment_logs"} {
+		var count int
+		if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table).Scan(&count); err != nil {
+			t.Fatalf("failed to count %s: %v", table, err)
+		}
+		if count != 0 {
+			t.Errorf("expected %s to be empty after deletion, got %d row(s)", table, count)
+		}
+	}
+
+	var linkedMachineID, linkedCertificateID, linkedMachineCertificateID string
+	if err := db.QueryRowContext(ctx,
+		"SELECT linked_machine_id, linked_certificate_id, linked_machine_certificate_id FROM domains WHERE id = ?",
+		"domain-1",
+	).Scan(&linkedMachineID, &linkedCertificateID, &linkedMachineCertificateID); err != nil {
+		t.Fatalf("failed to query domain links: %v", err)
+	}
+	if linkedMachineID != "machine-keep" || linkedCertificateID != "" || linkedMachineCertificateID != "" {
+		t.Errorf("expected certificate links cleared and machine link preserved, got machine=%q certificate=%q machine_certificate=%q", linkedMachineID, linkedCertificateID, linkedMachineCertificateID)
+	}
+}
+
 func TestCertRepository_SaveAndReadCertFiles(t *testing.T) {
 	db := setupTestDB(t)
 	tmpDir := t.TempDir()

@@ -34,8 +34,36 @@ func setupMachineTestDB(t *testing.T) *sql.DB {
 	if err != nil {
 		t.Fatalf("failed to open test db: %v", err)
 	}
-	if _, err := db.Exec(createMachinesTable); err != nil {
-		t.Fatalf("failed to create machines table: %v", err)
+	if _, err := db.Exec("PRAGMA foreign_keys=ON"); err != nil {
+		t.Fatalf("failed to enable foreign keys: %v", err)
+	}
+	tables := []string{
+		createMachinesTable,
+		`CREATE TABLE certificates (
+			id TEXT PRIMARY KEY
+		)`,
+		`CREATE TABLE machine_certificates (
+			id TEXT PRIMARY KEY,
+			machine_id TEXT NOT NULL REFERENCES machines(id),
+			certificate_id TEXT NOT NULL REFERENCES certificates(id)
+		)`,
+		`CREATE TABLE deployment_logs (
+			id TEXT PRIMARY KEY,
+			machine_certificate_id TEXT NOT NULL REFERENCES machine_certificates(id),
+			machine_id TEXT NOT NULL,
+			certificate_id TEXT NOT NULL
+		)`,
+		`CREATE TABLE domains (
+			id TEXT PRIMARY KEY,
+			linked_machine_id TEXT DEFAULT '',
+			linked_certificate_id TEXT DEFAULT '',
+			linked_machine_certificate_id TEXT DEFAULT ''
+		)`,
+	}
+	for _, stmt := range tables {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("failed to create test table: %v", err)
+		}
 	}
 	t.Cleanup(func() { db.Close() })
 	return db
@@ -224,6 +252,69 @@ func TestMachineRepository_Delete(t *testing.T) {
 	_, err = repo.GetByID(ctx, machine.ID)
 	if err != sql.ErrNoRows {
 		t.Errorf("expected machine to be deleted, got err=%v", err)
+	}
+}
+
+func TestMachineRepository_Delete_CascadesDeploymentData(t *testing.T) {
+	db := setupMachineTestDB(t)
+	repo := NewMachineRepository(db)
+	ctx := context.Background()
+
+	machine := &model.Machine{
+		Name:           "delete-with-deployment-data",
+		IP:             "10.0.0.1",
+		AgentTokenHash: "hash",
+	}
+	if err := repo.Create(ctx, machine); err != nil {
+		t.Fatalf("Create machine failed: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, "INSERT INTO certificates (id) VALUES (?)", "cert-1"); err != nil {
+		t.Fatalf("failed to insert certificate: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		"INSERT INTO machine_certificates (id, machine_id, certificate_id) VALUES (?, ?, ?)",
+		"mc-1", machine.ID, "cert-1",
+	); err != nil {
+		t.Fatalf("failed to insert machine certificate: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		"INSERT INTO deployment_logs (id, machine_certificate_id, machine_id, certificate_id) VALUES (?, ?, ?, ?)",
+		"log-1", "mc-1", machine.ID, "cert-1",
+	); err != nil {
+		t.Fatalf("failed to insert deployment log: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO domains (
+			id, linked_machine_id, linked_certificate_id, linked_machine_certificate_id
+		) VALUES (?, ?, ?, ?)`,
+		"domain-1", machine.ID, "cert-keep", "mc-1",
+	); err != nil {
+		t.Fatalf("failed to insert domain: %v", err)
+	}
+
+	if err := repo.Delete(ctx, machine.ID); err != nil {
+		t.Fatalf("Delete failed: %v", err)
+	}
+
+	for _, table := range []string{"machines", "machine_certificates", "deployment_logs"} {
+		var count int
+		if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table).Scan(&count); err != nil {
+			t.Fatalf("failed to count %s: %v", table, err)
+		}
+		if count != 0 {
+			t.Errorf("expected %s to be empty after deletion, got %d row(s)", table, count)
+		}
+	}
+
+	var linkedMachineID, linkedCertificateID, linkedMachineCertificateID string
+	if err := db.QueryRowContext(ctx,
+		"SELECT linked_machine_id, linked_certificate_id, linked_machine_certificate_id FROM domains WHERE id = ?",
+		"domain-1",
+	).Scan(&linkedMachineID, &linkedCertificateID, &linkedMachineCertificateID); err != nil {
+		t.Fatalf("failed to query domain links: %v", err)
+	}
+	if linkedMachineID != "" || linkedMachineCertificateID != "" || linkedCertificateID != "cert-keep" {
+		t.Errorf("expected machine links cleared and certificate link preserved, got machine=%q certificate=%q machine_certificate=%q", linkedMachineID, linkedCertificateID, linkedMachineCertificateID)
 	}
 }
 

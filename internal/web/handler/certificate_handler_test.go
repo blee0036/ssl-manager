@@ -70,6 +70,25 @@ func setupTestDB(t *testing.T) *sql.DB {
 		t.Fatalf("failed to create machine_certificates table: %v", err)
 	}
 
+	tables := []string{
+		`CREATE TABLE deployment_logs (
+			id TEXT PRIMARY KEY,
+			machine_certificate_id TEXT NOT NULL,
+			machine_id TEXT NOT NULL,
+			certificate_id TEXT NOT NULL
+		)`,
+		`CREATE TABLE domains (
+			id TEXT PRIMARY KEY,
+			linked_certificate_id TEXT DEFAULT '',
+			linked_machine_certificate_id TEXT DEFAULT ''
+		)`,
+	}
+	for _, stmt := range tables {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("failed to create related test table: %v", err)
+		}
+	}
+
 	t.Cleanup(func() { db.Close() })
 	return db
 }

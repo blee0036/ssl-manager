@@ -159,9 +159,51 @@ func (r *MachineRepository) Update(ctx context.Context, id string, updates map[s
 	return nil
 }
 
-// Delete deletes a machine.
+// Delete deletes a machine and the deployment data that belongs to it.
 func (r *MachineRepository) Delete(ctx context.Context, id string) error {
-	result, err := r.db.ExecContext(ctx, "DELETE FROM machines WHERE id = ?", id)
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to start machine deletion transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM deployment_logs
+		 WHERE machine_id = ?
+		    OR machine_certificate_id IN (
+				SELECT id FROM machine_certificates WHERE machine_id = ?
+			)`,
+		id, id,
+	); err != nil {
+		return fmt.Errorf("failed to delete machine deployment logs: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE domains
+		 SET linked_machine_id = CASE
+				WHEN linked_machine_id = ? THEN ''
+				ELSE linked_machine_id
+			END,
+			linked_machine_certificate_id = CASE
+				WHEN linked_machine_certificate_id IN (
+					SELECT id FROM machine_certificates WHERE machine_id = ?
+				) THEN ''
+				ELSE linked_machine_certificate_id
+			END
+		 WHERE linked_machine_id = ?
+		    OR linked_machine_certificate_id IN (
+				SELECT id FROM machine_certificates WHERE machine_id = ?
+			)`,
+		id, id, id, id,
+	); err != nil {
+		return fmt.Errorf("failed to clear machine domain links: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, "DELETE FROM machine_certificates WHERE machine_id = ?", id); err != nil {
+		return fmt.Errorf("failed to delete machine certificate configurations: %w", err)
+	}
+
+	result, err := tx.ExecContext(ctx, "DELETE FROM machines WHERE id = ?", id)
 	if err != nil {
 		return fmt.Errorf("failed to delete machine: %w", err)
 	}
@@ -172,6 +214,10 @@ func (r *MachineRepository) Delete(ctx context.Context, id string) error {
 	}
 	if rowsAffected == 0 {
 		return sql.ErrNoRows
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit machine deletion: %w", err)
 	}
 	return nil
 }
