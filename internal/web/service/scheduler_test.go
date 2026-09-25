@@ -756,7 +756,9 @@ func TestRunDomainMonitor_CallsProbeAll(t *testing.T) {
 	domainRepo := repository.NewDomainRepository(db)
 	certRepo := repository.NewCertificateRepository(db, t.TempDir())
 	alertSender := &mockAlertSender{}
-	domainMonitorSvc := NewDomainMonitorService(domainRepo, certRepo, alertSender, nil)
+	// Damping off: this test asserts that ProbeAll reaches every enabled domain, so each
+	// simulated DNS failure has to produce its alert on the first round.
+	domainMonitorSvc := NewDomainMonitorService(domainRepo, certRepo, alertSender, undampedMonitorConfig())
 
 	// Use a mock DNS resolver that fails (to keep test simple and fast)
 	domainMonitorSvc.SetDNSResolver(&mockDNSResolver{

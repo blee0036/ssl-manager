@@ -304,6 +304,8 @@ declare namespace Api {
     agent: {
       heartbeat_timeout_seconds: number;
       poll_interval_seconds: number;
+      /** 离线持续多久（秒）才推送 agent_offline 告警，默认 600 */
+      offline_alert_after_seconds: number;
     };
     alert: {
       default_before_days: number;
@@ -320,6 +322,14 @@ declare namespace Api {
     domain_monitor: {
       default_port: number;
       interval_minutes: number;
+      /** 单次 TLS 探测超时秒数，默认 15 */
+      timeout_seconds: number;
+      /** 单轮探测中失败后的重试次数，默认 2；0 表示不重试 */
+      probe_retries: number;
+      /** 两次探测尝试之间的等待秒数，默认 2 */
+      retry_delay_seconds: number;
+      /** 连续失败多少轮才推送告警，默认 2；1 表示首轮失败即告警 */
+      alert_after_failures: number;
     };
     turnstile: {
       enabled: boolean;

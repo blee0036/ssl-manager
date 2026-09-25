@@ -1010,27 +1010,50 @@ func (s *SchedulerService) updateRenewStatus(ctx context.Context, certID, status
 }
 
 // CheckHeartbeatTimeouts checks all machines for heartbeat timeouts.
-// Machines that haven't sent a heartbeat within heartbeat_timeout_seconds are marked offline.
-// Sends an alert for each machine that transitions to offline.
+//
+// It applies two independent thresholds so that the machine list stays accurate without
+// making notifications hair-trigger:
+//
+//   - agent.heartbeat_timeout_seconds decides when a machine is marked offline. This is a
+//     display concern, so it stays short.
+//   - agent.offline_alert_after_seconds decides when an agent_offline notification is
+//     pushed, and is deliberately much longer.
+//
+// With a single threshold, one missed heartbeat pair pushed a warning immediately and the
+// next successful heartbeat pushed a [Recovered] right behind it, so a momentary network
+// hiccup produced two messages and no actionable information. Waiting for the silence to
+// persist means an alert only goes out for an outage that is still ongoing.
+//
+// Repeat pushes while a machine stays offline are prevented by AlertService suppression
+// (an unresolved alert for the same machine and type short-circuits the send), so this may
+// safely re-evaluate every tick.
+//
+// Note that suppression keys off the alert still being active, which means marking an alert
+// resolved by hand while the machine is still silent will let the next tick raise it again.
+// That is intentional: the machine is genuinely still down, so treating the manual mark as a
+// real resolution would leave an ongoing outage unreported.
 func (s *SchedulerService) CheckHeartbeatTimeouts(ctx context.Context) error {
-	timeoutSeconds := s.runtimeCfg.Get().Agent.HeartbeatTimeoutSeconds
-	if timeoutSeconds <= 0 {
-		timeoutSeconds = 120
-	}
+	agentCfg := s.runtimeCfg.Get().Agent
+	timeoutSeconds := agentCfg.EffectiveHeartbeatTimeoutSeconds()
+	alertAfterSeconds := agentCfg.EffectiveOfflineAlertAfterSeconds()
 
 	cutoff := time.Now().UTC().Add(-time.Duration(timeoutSeconds) * time.Second)
+	alertCutoff := time.Now().UTC().Add(-time.Duration(alertAfterSeconds) * time.Second)
 	now := time.Now().UTC().Format(time.RFC3339)
 
-	// First, find machines that will go offline (for alerting)
+	// Alert on machines that have been silent past the (longer) alert threshold.
+	// These are matched by ListOfflineAlertCandidates rather than ListByHeartbeatBefore
+	// because by this point the UPDATE below has usually already flipped them to
+	// 'offline', and the online-only query would no longer see them.
 	if s.machineRepo != nil && s.alertSender != nil {
-		offlineMachines, err := s.machineRepo.ListByHeartbeatBefore(ctx, cutoff)
+		offlineMachines, err := s.machineRepo.ListOfflineAlertCandidates(ctx, alertCutoff)
 		if err != nil {
-			log.Printf("[Scheduler] Failed to list machines going offline: %v", err)
+			log.Printf("[Scheduler] Failed to list machines for offline alerting: %v", err)
 		} else {
 			for _, machine := range offlineMachines {
 				alertContent := fmt.Sprintf(
 					"Machine %s (%s, IP: %s) has gone offline. Last heartbeat was more than %d seconds ago.",
-					machine.Name, machine.ID, machine.IP, timeoutSeconds,
+					machine.Name, machine.ID, machine.IP, alertAfterSeconds,
 				)
 				if err := s.alertSender.SendAlert(
 					ctx, "warning", "agent_offline",

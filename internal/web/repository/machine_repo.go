@@ -345,6 +345,46 @@ func (r *MachineRepository) ListByHeartbeatBefore(ctx context.Context, before ti
 	return machines, nil
 }
 
+// ListOfflineAlertCandidates returns machines whose last heartbeat is older than the
+// given cutoff and that are still expected to be reporting, i.e. status is 'online' or
+// 'offline'. Machines that are 'pending' (never enrolled), 'revoked' or 'disabled' are
+// excluded because their silence is intentional and must not raise an alert.
+//
+// This differs from ListByHeartbeatBefore, which only matches status = 'online' and is
+// therefore limited to the moment a machine crosses the offline threshold. Alerting is
+// deliberately delayed past that moment (see AgentConfig.OfflineAlertAfterSeconds), by
+// which time the machine has already been flipped to 'offline' — so the alert query has
+// to keep matching offline machines as well.
+//
+// The result is intentionally not de-duplicated over time: every scheduler tick will keep
+// returning a machine that stays silent. Repeat notifications are prevented downstream by
+// AlertService suppression, which skips an alert while an unresolved one already exists
+// for the same target and type.
+func (r *MachineRepository) ListOfflineAlertCandidates(ctx context.Context, cutoff time.Time) ([]*model.Machine, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id, name, ip, hostname, os, arch, tags, remark, status, agent_version, agent_token_hash, agent_token_revoked_at, last_heartbeat_at, created_at, updated_at
+		 FROM machines
+		 WHERE last_heartbeat_at IS NOT NULL AND last_heartbeat_at < ? AND status IN ('online', 'offline')`,
+		cutoff.UTC().Format(time.RFC3339))
+	if err != nil {
+		return nil, fmt.Errorf("failed to list offline alert candidates: %w", err)
+	}
+	defer rows.Close()
+
+	var machines []*model.Machine
+	for rows.Next() {
+		m, err := scanMachineFromRows(rows)
+		if err != nil {
+			return nil, err
+		}
+		machines = append(machines, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate machines: %w", err)
+	}
+	return machines, nil
+}
+
 // ListByStatus returns machines with the given status.
 func (r *MachineRepository) ListByStatus(ctx context.Context, status string) ([]*model.Machine, error) {
 	rows, err := r.db.QueryContext(ctx,

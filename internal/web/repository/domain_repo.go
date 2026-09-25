@@ -319,6 +319,61 @@ func (r *DomainRepository) SaveMonitorResult(ctx context.Context, result *model.
 	return nil
 }
 
+// CountConsecutiveMonitorFailures returns the length of the unbroken run of failed
+// monitor results for a domain, counted backwards from the newest result.
+//
+// It powers the flap damping in DomainMonitorService: an alert is only pushed once this
+// count reaches the configured threshold, so a single transient probe failure (a slow
+// handshake, one lost packet, a certificate briefly out of sync during deployment) never
+// produces an alert followed immediately by a [Recovered] message.
+//
+// Because the streak is derived from the persisted domain_monitor_results rows rather
+// than from an in-memory counter, it survives process restarts and needs no extra state.
+//
+// "Failure" is the exact complement of the fully-healthy condition used to auto-resolve
+// alerts in DomainMonitorService.Probe (TLS succeeded AND the certificate covers the
+// domain AND no error message), so a probe can never be healthy enough to resolve an
+// alert while still counting towards raising one.
+//
+// At most limit rows are inspected, so the return value never exceeds limit. Callers pass
+// their alert threshold as limit: anything beyond it cannot change the decision.
+func (r *DomainRepository) CountConsecutiveMonitorFailures(ctx context.Context, domainID string, limit int) (int, error) {
+	if limit <= 0 {
+		return 0, nil
+	}
+
+	query := `SELECT tls_success, domain_matched, error_message
+	FROM domain_monitor_results WHERE domain_id = ?
+	ORDER BY checked_at DESC LIMIT ?`
+
+	rows, err := r.db.QueryContext(ctx, query, domainID, limit)
+	if err != nil {
+		return 0, fmt.Errorf("failed to query consecutive monitor failures: %w", err)
+	}
+	defer rows.Close()
+
+	streak := 0
+	for rows.Next() {
+		var tlsSuccess, domainMatched int
+		var errorMessage sql.NullString
+		if err := rows.Scan(&tlsSuccess, &domainMatched, &errorMessage); err != nil {
+			return 0, fmt.Errorf("failed to scan monitor result health: %w", err)
+		}
+
+		healthy := tlsSuccess == 1 && domainMatched == 1 && errorMessage.String == ""
+		if healthy {
+			// The run is broken by the first healthy result; older rows are irrelevant.
+			break
+		}
+		streak++
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("error iterating monitor result health rows: %w", err)
+	}
+
+	return streak, nil
+}
+
 // GetLatestMonitorResult retrieves the most recent monitor result for a domain.
 func (r *DomainRepository) GetLatestMonitorResult(ctx context.Context, domainID string) (*model.DomainMonitorResult, error) {
 	query := `SELECT id, domain_id, checked_port, resolved_ips, tls_success,

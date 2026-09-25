@@ -36,6 +36,9 @@ const model = ref<Api.SystemConfig>({
   agent: {
     heartbeat_timeout_seconds: 120,
     poll_interval_seconds: 30,
+    // 告警去抖参数：初始化向导保持精简，不单独出表单项，
+    // 这里带上和后端 DefaultConfig 一致的默认值，装完后在「系统配置」页调整。
+    offline_alert_after_seconds: 600,
   },
   alert: {
     default_before_days: 15,
@@ -52,6 +55,11 @@ const model = ref<Api.SystemConfig>({
   domain_monitor: {
     default_port: 443,
     interval_minutes: 60,
+    // 同上：探测去抖参数走默认值，不在向导里暴露。
+    timeout_seconds: 15,
+    probe_retries: 2,
+    retry_delay_seconds: 2,
+    alert_after_failures: 2,
   },
   turnstile: {
     enabled: false,

@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"net"
 	"strings"
 	"time"
@@ -49,12 +50,12 @@ func (r *defaultDNSResolver) LookupHost(ctx context.Context, host string) ([]str
 
 // DomainMonitorService handles domain monitoring business logic.
 type DomainMonitorService struct {
-	domainRepo  *repository.DomainRepository
-	certRepo    *repository.CertificateRepository
-	tlsDialer   TLSDialer
-	resolver    DNSResolver
-	alerter     AlertSender
-	runtimeCfg  *config.RuntimeConfig
+	domainRepo *repository.DomainRepository
+	certRepo   *repository.CertificateRepository
+	tlsDialer  TLSDialer
+	resolver   DNSResolver
+	alerter    AlertSender
+	runtimeCfg *config.RuntimeConfig
 }
 
 // NewDomainMonitorService creates a new DomainMonitorService.
@@ -65,12 +66,12 @@ func NewDomainMonitorService(
 	runtimeCfg *config.RuntimeConfig,
 ) *DomainMonitorService {
 	return &DomainMonitorService{
-		domainRepo:  domainRepo,
-		certRepo:    certRepo,
-		tlsDialer:   &defaultTLSDialer{},
-		resolver:    &defaultDNSResolver{},
-		alerter:     alerter,
-		runtimeCfg:  runtimeCfg,
+		domainRepo: domainRepo,
+		certRepo:   certRepo,
+		tlsDialer:  &defaultTLSDialer{},
+		resolver:   &defaultDNSResolver{},
+		alerter:    alerter,
+		runtimeCfg: runtimeCfg,
 	}
 }
 
@@ -83,6 +84,143 @@ func (s *DomainMonitorService) defaultPort() int {
 		}
 	}
 	return 443
+}
+
+// monitorCfg returns the current domain monitor settings.
+//
+// The runtime config is re-read on every call so a change saved through
+// PUT /api/system/config takes effect on the next probe without a restart. A nil
+// runtimeCfg falls back to the built-in defaults, matching defaultPort() above — the
+// damping is therefore on by default and cannot be silently lost by a wiring mistake.
+func (s *DomainMonitorService) monitorCfg() config.DomainMonitorConfig {
+	if s.runtimeCfg == nil {
+		return config.DefaultConfig().DomainMonitor
+	}
+	return s.runtimeCfg.Get().DomainMonitor
+}
+
+// withRetry runs attempt up to 1+probe_retries times and returns the error of the last
+// attempt if all of them fail.
+//
+// Each attempt gets its own timeout derived from domain_monitor.timeout_seconds, so a
+// retry is a genuinely fresh chance rather than a share of one shrinking deadline. This is
+// the first of the two damping layers: transient trouble (a lost SYN, a momentarily
+// overloaded origin, the "context deadline exceeded" handshake timeouts that dominated the
+// alert noise) is absorbed here and never even reaches the result table.
+func (s *DomainMonitorService) withRetry(ctx context.Context, attempt func(context.Context) error) error {
+	cfg := s.monitorCfg()
+	timeout := cfg.EffectiveTimeout()
+	retries := cfg.EffectiveProbeRetries()
+	delay := cfg.EffectiveRetryDelay()
+
+	var lastErr error
+	for i := 0; i <= retries; i++ {
+		if i > 0 && delay > 0 {
+			// Wait before retrying, but give up immediately if the caller is shutting
+			// down — ProbeAll runs on the scheduler goroutine.
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(delay):
+			}
+		}
+
+		attemptCtx, cancel := context.WithTimeout(ctx, timeout)
+		err := attempt(attemptCtx)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+
+		// Once the parent context is done, later attempts cannot succeed either.
+		if ctx.Err() != nil {
+			return lastErr
+		}
+	}
+
+	return lastErr
+}
+
+// resolveWithRetry resolves a domain name to IPs, retrying transient DNS failures.
+//
+// An empty answer with a nil error is treated as a failure rather than a success: the
+// caller indexes ips[0], so letting it through would panic.
+func (s *DomainMonitorService) resolveWithRetry(ctx context.Context, host string) ([]string, error) {
+	var ips []string
+
+	err := s.withRetry(ctx, func(attemptCtx context.Context) error {
+		found, attemptErr := s.resolver.LookupHost(attemptCtx, host)
+		if attemptErr != nil {
+			return attemptErr
+		}
+		if len(found) == 0 {
+			return fmt.Errorf("no addresses returned for %s", host)
+		}
+		ips = found
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return ips, nil
+}
+
+// dialWithRetry performs the TLS handshake, retrying transient failures.
+//
+// Only the successful attempt yields a connection; failed attempts return an error and no
+// connection, so there is nothing to leak between iterations. Cancelling an attempt's
+// context after a successful handshake is safe — the context only bounds dialling.
+func (s *DomainMonitorService) dialWithRetry(ctx context.Context, addr string, tlsConfig *tls.Config) (*tls.Conn, error) {
+	var conn *tls.Conn
+
+	err := s.withRetry(ctx, func(attemptCtx context.Context) error {
+		c, attemptErr := s.tlsDialer.DialTLS(attemptCtx, addr, tlsConfig)
+		if attemptErr != nil {
+			return attemptErr
+		}
+		conn = c
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return conn, nil
+}
+
+// maybeAlert sends a domain monitoring alert only once the failure has persisted across
+// domain_monitor.alert_after_failures consecutive probe rounds.
+//
+// This is the second damping layer. Without it a single failed round produced a warning
+// push followed by a [Recovered] push on the next round, so every transient blip cost two
+// notifications and the alert was already stale by the time anyone read it.
+//
+// The streak is read back from domain_monitor_results, which means the caller must have
+// saved the current probe's result before calling this.
+func (s *DomainMonitorService) maybeAlert(ctx context.Context, domain *model.Domain, alertType, message string) {
+	// Mirrors triggerAlert's guards, so an ignored domain costs no extra query.
+	if domain.AlertIgnored || s.alerter == nil {
+		return
+	}
+
+	threshold := s.monitorCfg().EffectiveAlertAfterFailures()
+	if threshold > 1 {
+		streak, err := s.domainRepo.CountConsecutiveMonitorFailures(ctx, domain.ID, threshold)
+		switch {
+		case err != nil:
+			// Fail open: a bookkeeping failure must not swallow a real outage alert.
+			log.Printf("[DomainMonitor] Failed to count consecutive failures for %s, alerting anyway: %v",
+				domain.Name, err)
+		case streak < threshold:
+			log.Printf("[DomainMonitor] Holding %s alert for %s (%d/%d consecutive failed probes)",
+				alertType, domain.Name, streak, threshold)
+			return
+		}
+	}
+
+	s.triggerAlert(ctx, domain, alertType, message)
 }
 
 // SetTLSDialer sets a custom TLS dialer (for testing).
@@ -209,8 +347,8 @@ func (s *DomainMonitorService) Probe(ctx context.Context, domainID string) (*mod
 		CheckedAt:   time.Now().UTC(),
 	}
 
-	// Step 1: DNS resolve
-	ips, err := s.resolver.LookupHost(ctx, domain.Name)
+	// Step 1: DNS resolve (retried within this round, see withRetry)
+	ips, err := s.resolveWithRetry(ctx, domain.Name)
 	if err != nil {
 		result.ErrorMessage = fmt.Sprintf("DNS resolution failed: %v", err)
 		result.TLSSuccess = false
@@ -220,8 +358,9 @@ func (s *DomainMonitorService) Probe(ctx context.Context, domainID string) (*mod
 			return nil, fmt.Errorf("failed to save monitor result: %w", saveErr)
 		}
 
-		// Trigger alert for DNS failure
-		s.triggerAlert(ctx, domain, "dns_resolve_failed", result.ErrorMessage)
+		// Alert only once this failure has repeated enough times (see maybeAlert).
+		// The result row above is part of that count, so it must be saved first.
+		s.maybeAlert(ctx, domain, "dns_resolve_failed", result.ErrorMessage)
 
 		return result, nil
 	}
@@ -234,10 +373,7 @@ func (s *DomainMonitorService) Probe(ctx context.Context, domainID string) (*mod
 		InsecureSkipVerify: true, // We verify manually to get full cert info
 	}
 
-	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	conn, err := s.tlsDialer.DialTLS(probeCtx, addr, tlsConfig)
+	conn, err := s.dialWithRetry(ctx, addr, tlsConfig)
 	if err != nil {
 		result.ErrorMessage = fmt.Sprintf("TLS handshake failed: %v", err)
 		result.TLSSuccess = false
@@ -247,8 +383,8 @@ func (s *DomainMonitorService) Probe(ctx context.Context, domainID string) (*mod
 			return nil, fmt.Errorf("failed to save monitor result: %w", saveErr)
 		}
 
-		// Trigger alert for TLS failure
-		s.triggerAlert(ctx, domain, "tls_handshake_failed", result.ErrorMessage)
+		// Alert only once this failure has repeated enough times (see maybeAlert).
+		s.maybeAlert(ctx, domain, "tls_handshake_failed", result.ErrorMessage)
 
 		return result, nil
 	}
@@ -280,7 +416,14 @@ func (s *DomainMonitorService) Probe(ctx context.Context, domainID string) (*mod
 		result.ChainValid = verifyCertChain(certs)
 	}
 
-	// Step 4: Compare fingerprint with linked certificate in system
+	// Step 4: Compare fingerprint with linked certificate in system.
+	//
+	// The alert is recorded as pending rather than sent here: maybeAlert counts the
+	// current probe as part of the consecutive-failure streak, so it can only run after
+	// step 5 has persisted this result. A brief mismatch is expected every time a
+	// certificate is deployed (the live cert and the stored cert are out of sync for a
+	// moment), which is exactly the kind of flapping the damping is meant to absorb.
+	var pendingAlertType, pendingAlertMessage string
 	if domain.LinkedCertificateID != "" && result.CertificateFingerprintSHA256 != "" {
 		linkedCert, err := s.certRepo.GetByID(ctx, domain.LinkedCertificateID)
 		if err == nil && linkedCert.FingerprintSHA256 != result.CertificateFingerprintSHA256 {
@@ -288,13 +431,18 @@ func (s *DomainMonitorService) Probe(ctx context.Context, domainID string) (*mod
 			result.ErrorMessage = fmt.Sprintf("fingerprint mismatch: online=%s, system=%s",
 				result.CertificateFingerprintSHA256, linkedCert.FingerprintSHA256)
 
-			s.triggerAlert(ctx, domain, "fingerprint_mismatch", result.ErrorMessage)
+			pendingAlertType = "fingerprint_mismatch"
+			pendingAlertMessage = result.ErrorMessage
 		}
 	}
 
 	// Step 5: Save result
 	if err := s.domainRepo.SaveMonitorResult(ctx, result); err != nil {
 		return nil, fmt.Errorf("failed to save monitor result: %w", err)
+	}
+
+	if pendingAlertType != "" {
+		s.maybeAlert(ctx, domain, pendingAlertType, pendingAlertMessage)
 	}
 
 	// Auto-resolve alerts if probe was fully successful

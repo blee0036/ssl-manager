@@ -125,6 +125,7 @@ const systemConfig = {
   agent: {
     heartbeat_timeout_seconds: 120,
     poll_interval_seconds: 30,
+    offline_alert_after_seconds: 600,
   },
   alert: {
     default_before_days: 15,
@@ -141,6 +142,10 @@ const systemConfig = {
   domain_monitor: {
     default_port: 443,
     interval_minutes: 60,
+    timeout_seconds: 15,
+    probe_retries: 2,
+    retry_delay_seconds: 2,
+    alert_after_failures: 2,
   },
   turnstile: {
     enabled: false,

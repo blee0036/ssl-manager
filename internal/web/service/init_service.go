@@ -258,6 +258,14 @@ func (s *InitService) SaveConfig(ctx context.Context, initToken string, input Sa
 		if input.Agent.PollIntervalSeconds > 0 {
 			cfg.Agent.PollIntervalSeconds = input.Agent.PollIntervalSeconds
 		}
+		// Guarded with > 0 like the fields above, which means the init wizard cannot send
+		// an explicit 0. That is deliberate for the alert damping knobs: under this
+		// endpoint's patch semantics a 0 is indistinguishable from "field absent", and an
+		// older wizard build that omits it must not end up disabling damping. The full
+		// range is editable afterwards through PUT /api/system/config.
+		if input.Agent.OfflineAlertAfterSeconds > 0 {
+			cfg.Agent.OfflineAlertAfterSeconds = input.Agent.OfflineAlertAfterSeconds
+		}
 	}
 
 	if input.Alert != nil {
@@ -289,6 +297,20 @@ func (s *InitService) SaveConfig(ctx context.Context, initToken string, input Sa
 		}
 		if input.DomainMonitor.IntervalMinutes > 0 {
 			cfg.DomainMonitor.IntervalMinutes = input.DomainMonitor.IntervalMinutes
+		}
+		// See the note on Agent.OfflineAlertAfterSeconds above for why these use > 0
+		// rather than >= 0.
+		if input.DomainMonitor.TimeoutSeconds > 0 {
+			cfg.DomainMonitor.TimeoutSeconds = input.DomainMonitor.TimeoutSeconds
+		}
+		if input.DomainMonitor.ProbeRetries > 0 {
+			cfg.DomainMonitor.ProbeRetries = input.DomainMonitor.ProbeRetries
+		}
+		if input.DomainMonitor.RetryDelaySeconds > 0 {
+			cfg.DomainMonitor.RetryDelaySeconds = input.DomainMonitor.RetryDelaySeconds
+		}
+		if input.DomainMonitor.AlertAfterFailures > 0 {
+			cfg.DomainMonitor.AlertAfterFailures = input.DomainMonitor.AlertAfterFailures
 		}
 	}
 

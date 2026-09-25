@@ -401,7 +401,6 @@ func TestInitService_SaveConfig_TurnstileEnabled_MissingSecretKey(t *testing.T) 
 	}
 }
 
-
 // =============================================================================
 // Token Expiry Tests (Requirement 1.5, 1.9)
 // =============================================================================
@@ -1252,5 +1251,119 @@ func TestInitService_SaveConfig_WrongToken(t *testing.T) {
 	})
 	if !errors.Is(err, ErrInvalidInitToken) {
 		t.Errorf("expected ErrInvalidInitToken for wrong token, got: %v", err)
+	}
+}
+
+// TestInitService_SaveConfig_FlapDampingFields verifies that the alert flap-damping knobs
+// survive the init wizard's patch merge.
+//
+// SaveConfigInput merges field by field, so a field that was added to config.Config but not
+// to the merge logic is silently dropped and falls back to the default — exactly what
+// happened to domain_expiry. This pins the new fields down against that failure mode.
+func TestInitService_SaveConfig_FlapDampingFields(t *testing.T) {
+	db := setupInitTestDB(t)
+	userRepo := repository.NewUserRepository(db.DB)
+	configPath := filepath.Join(t.TempDir(), "config.json")
+
+	svc := NewInitService(db, userRepo, configPath, nil)
+	ctx := context.Background()
+
+	_, token, err := svc.CreateAdmin(ctx, CreateAdminInput{
+		Username: "admin",
+		Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("failed to create admin: %v", err)
+	}
+
+	cfg, err := svc.SaveConfig(ctx, token, SaveConfigInput{
+		Server: &config.ServerConfig{ExternalURL: "https://ssl.example.com", ListenAddr: ":8080"},
+		Agent: &config.AgentConfig{
+			HeartbeatTimeoutSeconds:  90,
+			PollIntervalSeconds:      45,
+			OfflineAlertAfterSeconds: 900,
+		},
+		DomainMonitor: &config.DomainMonitorConfig{
+			DefaultPort:        443,
+			IntervalMinutes:    30,
+			TimeoutSeconds:     20,
+			ProbeRetries:       3,
+			RetryDelaySeconds:  5,
+			AlertAfterFailures: 4,
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to save config: %v", err)
+	}
+
+	if cfg.Agent.OfflineAlertAfterSeconds != 900 {
+		t.Errorf("expected offline_alert_after_seconds 900, got %d", cfg.Agent.OfflineAlertAfterSeconds)
+	}
+	if cfg.DomainMonitor.TimeoutSeconds != 20 {
+		t.Errorf("expected timeout_seconds 20, got %d", cfg.DomainMonitor.TimeoutSeconds)
+	}
+	if cfg.DomainMonitor.ProbeRetries != 3 {
+		t.Errorf("expected probe_retries 3, got %d", cfg.DomainMonitor.ProbeRetries)
+	}
+	if cfg.DomainMonitor.RetryDelaySeconds != 5 {
+		t.Errorf("expected retry_delay_seconds 5, got %d", cfg.DomainMonitor.RetryDelaySeconds)
+	}
+	if cfg.DomainMonitor.AlertAfterFailures != 4 {
+		t.Errorf("expected alert_after_failures 4, got %d", cfg.DomainMonitor.AlertAfterFailures)
+	}
+
+	// The values must also survive the round trip through config.json.
+	reloaded, err := config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("failed to reload config: %v", err)
+	}
+	if reloaded.Agent.OfflineAlertAfterSeconds != 900 {
+		t.Errorf("expected the persisted offline_alert_after_seconds 900, got %d", reloaded.Agent.OfflineAlertAfterSeconds)
+	}
+	if reloaded.DomainMonitor.AlertAfterFailures != 4 {
+		t.Errorf("expected the persisted alert_after_failures 4, got %d", reloaded.DomainMonitor.AlertAfterFailures)
+	}
+}
+
+// TestInitService_SaveConfig_OmittedDampingFieldsKeepDefaults verifies that a wizard build
+// that does not know these fields cannot weaken the damping: an omitted (zero) value leaves
+// the default in place rather than writing 0.
+func TestInitService_SaveConfig_OmittedDampingFieldsKeepDefaults(t *testing.T) {
+	db := setupInitTestDB(t)
+	userRepo := repository.NewUserRepository(db.DB)
+	configPath := filepath.Join(t.TempDir(), "config.json")
+
+	svc := NewInitService(db, userRepo, configPath, nil)
+	ctx := context.Background()
+
+	_, token, err := svc.CreateAdmin(ctx, CreateAdminInput{
+		Username: "admin",
+		Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("failed to create admin: %v", err)
+	}
+
+	// Only the fields an older wizard knows about.
+	cfg, err := svc.SaveConfig(ctx, token, SaveConfigInput{
+		Server:        &config.ServerConfig{ExternalURL: "https://ssl.example.com", ListenAddr: ":8080"},
+		Agent:         &config.AgentConfig{HeartbeatTimeoutSeconds: 120, PollIntervalSeconds: 60},
+		DomainMonitor: &config.DomainMonitorConfig{DefaultPort: 443, IntervalMinutes: 60},
+	})
+	if err != nil {
+		t.Fatalf("failed to save config: %v", err)
+	}
+
+	if cfg.Agent.OfflineAlertAfterSeconds != 600 {
+		t.Errorf("expected the default offline_alert_after_seconds 600, got %d", cfg.Agent.OfflineAlertAfterSeconds)
+	}
+	if cfg.DomainMonitor.AlertAfterFailures != 2 {
+		t.Errorf("expected the default alert_after_failures 2, got %d", cfg.DomainMonitor.AlertAfterFailures)
+	}
+	if cfg.DomainMonitor.ProbeRetries != 2 {
+		t.Errorf("expected the default probe_retries 2, got %d", cfg.DomainMonitor.ProbeRetries)
+	}
+	if cfg.DomainMonitor.TimeoutSeconds != 15 {
+		t.Errorf("expected the default timeout_seconds 15, got %d", cfg.DomainMonitor.TimeoutSeconds)
 	}
 }

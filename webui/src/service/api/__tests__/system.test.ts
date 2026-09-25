@@ -46,11 +46,22 @@ function ok<T>(data: T) {
  */
 const sampleConfig: Api.SystemConfig = {
   server: { external_url: 'http://localhost:8080', listen_addr: ':8080' },
-  agent: { heartbeat_timeout_seconds: 120, poll_interval_seconds: 60 },
+  agent: {
+    heartbeat_timeout_seconds: 120,
+    poll_interval_seconds: 60,
+    offline_alert_after_seconds: 600,
+  },
   alert: { default_before_days: 15 },
   certbot: { binary_path: 'certbot', data_dir: './data/certbot', email: '' },
   readonly: { enabled: false, view_password: '' },
-  domain_monitor: { default_port: 443, interval_minutes: 60 },
+  domain_monitor: {
+    default_port: 443,
+    interval_minutes: 60,
+    timeout_seconds: 15,
+    probe_retries: 2,
+    retry_delay_seconds: 2,
+    alert_after_failures: 2,
+  },
   turnstile: { enabled: false, site_key: '', secret_key: '' },
   thirdpart_dns: { sync_interval_minutes: 360 },
   cleanup: { retention_days: 7, min_keep_count: 1000 },

@@ -45,7 +45,7 @@ func TestProperty19_DomainFingerprintMismatchMarksAnomaly(t *testing.T) {
 			domainRepo := repository.NewDomainRepository(db)
 			certRepo := repository.NewCertificateRepository(db, tmpDir)
 			alertSender := &mockAlertSender{}
-			svc := NewDomainMonitorService(domainRepo, certRepo, alertSender, nil)
+			svc := NewDomainMonitorService(domainRepo, certRepo, alertSender, undampedMonitorConfig())
 
 			ctx := context.Background()
 
@@ -172,7 +172,7 @@ func TestProperty19_DomainFingerprintMismatchMarksAnomaly(t *testing.T) {
 			domainRepo := repository.NewDomainRepository(db)
 			certRepo := repository.NewCertificateRepository(db, tmpDir)
 			alertSender := &mockAlertSender{}
-			svc := NewDomainMonitorService(domainRepo, certRepo, alertSender, nil)
+			svc := NewDomainMonitorService(domainRepo, certRepo, alertSender, undampedMonitorConfig())
 
 			ctx := context.Background()
 

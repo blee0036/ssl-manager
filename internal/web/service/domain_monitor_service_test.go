@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ssl-manager/ssl-manager/internal/config"
 	"github.com/ssl-manager/ssl-manager/internal/model"
 	"github.com/ssl-manager/ssl-manager/internal/web/repository"
 )
@@ -51,6 +52,23 @@ func (m *mockDNSResolver) LookupHost(ctx context.Context, host string) ([]string
 // Uses the same interface as the scheduler's mockAlertSender but with a different name
 // to avoid redeclaration since both are in the same test package.
 // Note: We reuse the existing mockAlertSender from scheduler_test.go directly.
+
+// undampedMonitorConfig returns a RuntimeConfig that turns the probe damping off:
+// no in-round retries and an alert threshold of one failed round.
+//
+// Tests that exercise the alert plumbing itself (a failed probe produces an alert of the
+// right type) use this so a single simulated failure still yields exactly one alert.
+// Without it they would inherit the production defaults — three attempts two seconds apart,
+// and no alert until the second consecutive failed round — which is the behaviour covered
+// separately by the damping tests in domain_monitor_damping_test.go.
+func undampedMonitorConfig() *config.RuntimeConfig {
+	cfg := config.DefaultConfig()
+	cfg.DomainMonitor.TimeoutSeconds = 2
+	cfg.DomainMonitor.ProbeRetries = 0
+	cfg.DomainMonitor.RetryDelaySeconds = 0
+	cfg.DomainMonitor.AlertAfterFailures = 1
+	return config.NewRuntimeConfig(cfg)
+}
 
 // setupDomainMonitorTestDB creates a test DB with required tables for domain monitoring.
 func setupDomainMonitorTestDB(t *testing.T) *sql.DB {
@@ -259,7 +277,7 @@ func TestDomainMonitorService_Probe_DNSFailure(t *testing.T) {
 	db := setupDomainMonitorTestDB(t)
 	domainRepo := repository.NewDomainRepository(db)
 	alertSender := &mockAlertSender{}
-	svc := NewDomainMonitorService(domainRepo, nil, alertSender, nil)
+	svc := NewDomainMonitorService(domainRepo, nil, alertSender, undampedMonitorConfig())
 
 	// Set mock resolver that fails
 	svc.SetDNSResolver(&mockDNSResolver{
@@ -301,7 +319,7 @@ func TestDomainMonitorService_Probe_TLSFailure(t *testing.T) {
 	db := setupDomainMonitorTestDB(t)
 	domainRepo := repository.NewDomainRepository(db)
 	alertSender := &mockAlertSender{}
-	svc := NewDomainMonitorService(domainRepo, nil, alertSender, nil)
+	svc := NewDomainMonitorService(domainRepo, nil, alertSender, undampedMonitorConfig())
 
 	// Set mock resolver that succeeds
 	svc.SetDNSResolver(&mockDNSResolver{
@@ -461,7 +479,7 @@ func TestDomainMonitorService_Probe_FingerprintMismatch(t *testing.T) {
 	domainRepo := repository.NewDomainRepository(db)
 	certRepo := repository.NewCertificateRepository(db, tmpDir)
 	alertSender := &mockAlertSender{}
-	svc := NewDomainMonitorService(domainRepo, certRepo, alertSender, nil)
+	svc := NewDomainMonitorService(domainRepo, certRepo, alertSender, undampedMonitorConfig())
 
 	// Create a certificate in the system with a different fingerprint
 	ctx := context.Background()

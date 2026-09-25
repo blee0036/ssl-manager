@@ -44,6 +44,7 @@ const model = ref<Api.SystemConfig>({
   agent: {
     heartbeat_timeout_seconds: 120,
     poll_interval_seconds: 30,
+    offline_alert_after_seconds: 600,
   },
   alert: {
     default_before_days: 15,
@@ -60,6 +61,10 @@ const model = ref<Api.SystemConfig>({
   domain_monitor: {
     default_port: 443,
     interval_minutes: 60,
+    timeout_seconds: 15,
+    probe_retries: 2,
+    retry_delay_seconds: 2,
+    alert_after_failures: 2,
   },
   turnstile: {
     enabled: false,
@@ -94,6 +99,38 @@ const rules: FormRules = {
   ],
 };
 
+/**
+ * 补齐后端响应里可能缺失的分组与字段。
+ *
+ * 可选分组（auth / thirdpart_dns / cleanup / domain_expiry）缺失时模板里的 `!` 断言会炸，
+ * 必填分组里新增的字段缺失时输入框会显示为空、保存时又被后端当 0 处理，
+ * 所以这里统一给出和后端 DefaultConfig 一致的兜底值。
+ */
+function normalizeConfig(data: Api.SystemConfig): Api.SystemConfig {
+  return {
+    ...data,
+    auth: data.auth ?? { session_expiry_hours: 24 },
+    agent: {
+      ...data.agent,
+      offline_alert_after_seconds: data.agent?.offline_alert_after_seconds ?? 600,
+    },
+    domain_monitor: {
+      ...data.domain_monitor,
+      timeout_seconds: data.domain_monitor?.timeout_seconds ?? 15,
+      probe_retries: data.domain_monitor?.probe_retries ?? 2,
+      retry_delay_seconds: data.domain_monitor?.retry_delay_seconds ?? 2,
+      alert_after_failures: data.domain_monitor?.alert_after_failures ?? 2,
+    },
+    thirdpart_dns: data.thirdpart_dns ?? { sync_interval_minutes: 360 },
+    cleanup: data.cleanup ?? { retention_days: 7, min_keep_count: 1000 },
+    domain_expiry: data.domain_expiry ?? {
+      expiry_threshold_days: 14,
+      refresh_interval_minutes: 1440,
+      whois_timeout_seconds: 10,
+    },
+  };
+}
+
 /** 加载系统配置 */
 async function fetchConfig() {
   pageLoading.value = true;
@@ -101,17 +138,7 @@ async function fetchConfig() {
   try {
     const response = await getSystemConfig();
     const data = adaptResponse<Api.SystemConfig>(response.data);
-    model.value = {
-      ...data,
-      auth: data.auth ?? { session_expiry_hours: 24 },
-      thirdpart_dns: data.thirdpart_dns ?? { sync_interval_minutes: 360 },
-      cleanup: data.cleanup ?? { retention_days: 7, min_keep_count: 1000 },
-      domain_expiry: data.domain_expiry ?? {
-        expiry_threshold_days: 14,
-        refresh_interval_minutes: 1440,
-        whois_timeout_seconds: 10,
-      },
-    };
+    model.value = normalizeConfig(data);
     // 重置敏感字段显示状态
     showViewPassword.value = false;
     showTurnstileSecret.value = false;
@@ -134,7 +161,7 @@ async function handleSubmit() {
   try {
     const response = await updateSystemConfig(model.value);
     const data = adaptResponse<Api.SystemConfig>(response.data);
-    model.value = data;
+    model.value = normalizeConfig(data);
     // 重置敏感字段显示状态
     showViewPassword.value = false;
     showTurnstileSecret.value = false;
@@ -221,6 +248,19 @@ onMounted(() => {
             class="w-full"
           />
         </NFormItem>
+        <NFormItem label="离线告警延迟（秒）" style="margin-top: 12px">
+          <NInputNumber
+            v-model:value="model.agent.offline_alert_after_seconds"
+            :min="0"
+            :max="86400"
+            class="w-full"
+            placeholder="600"
+          />
+        </NFormItem>
+        <span class="text-xs text-gray-500">
+          心跳中断持续超过此时长才推送离线告警。心跳超时只影响列表上的在线状态，这里才决定是否发通知，
+          调大可避免网络抖动造成「告警 + 恢复」成对刷屏。实际生效值不会小于心跳超时，推荐值 600
+        </span>
       </NCard>
 
       <!-- 告警配置 -->
@@ -290,6 +330,49 @@ onMounted(() => {
             class="w-full"
           />
         </NFormItem>
+        <NFormItem label="探测超时（秒）" style="margin-top: 12px">
+          <NInputNumber
+            v-model:value="model.domain_monitor.timeout_seconds"
+            :min="0"
+            :max="300"
+            class="w-full"
+            placeholder="15"
+          />
+        </NFormItem>
+        <span class="text-xs text-gray-500">单次 TLS 握手的超时时间，过小会把源站的正常波动误判成故障，推荐值 15</span>
+        <NFormItem label="探测重试次数" style="margin-top: 12px">
+          <NInputNumber
+            v-model:value="model.domain_monitor.probe_retries"
+            :min="0"
+            :max="10"
+            class="w-full"
+            placeholder="2"
+          />
+        </NFormItem>
+        <span class="text-xs text-gray-500">同一轮探测内失败后的重试次数，瞬时丢包在当轮就能消化掉，设为 0 表示不重试，推荐值 2</span>
+        <NFormItem label="重试间隔（秒）" style="margin-top: 12px">
+          <NInputNumber
+            v-model:value="model.domain_monitor.retry_delay_seconds"
+            :min="0"
+            :max="60"
+            class="w-full"
+            placeholder="2"
+          />
+        </NFormItem>
+        <span class="text-xs text-gray-500">两次探测尝试之间的等待时间，推荐值 2</span>
+        <NFormItem label="连续失败几轮才告警" style="margin-top: 12px">
+          <NInputNumber
+            v-model:value="model.domain_monitor.alert_after_failures"
+            :min="0"
+            :max="10"
+            class="w-full"
+            placeholder="2"
+          />
+        </NFormItem>
+        <span class="text-xs text-gray-500">
+          连续失败达到此轮数才推送告警，设为 1 表示首轮失败即告警。
+          调大可过滤偶发抖动，但真实故障的告警也会相应延后（每轮相隔一个检查间隔），推荐值 2
+        </span>
       </NCard>
 
       <!-- 域名到期监控（WHOIS） -->
