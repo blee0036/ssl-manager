@@ -21,8 +21,11 @@ FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder
 
 WORKDIR /src
 ARG BUILDPLATFORM
-ARG TARGETOS=linux
-ARG TARGETARCH=amd64
+# Declare without defaults so BuildKit fills them from the target platform.
+# A default such as TARGETARCH=amd64 overrides the automatic value, which made
+# the linux/arm64 image ship an amd64 ssl-manager-web binary.
+ARG TARGETOS
+ARG TARGETARCH
 ARG VERSION=0.0.0
 
 # Install build dependencies
