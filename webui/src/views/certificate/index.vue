@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue';
+import { ref, reactive, computed, onMounted } from 'vue';
 import {
   NCard,
   NSpace,
   NButton,
   NIcon,
+  NInput,
   NResult,
   useMessage,
   useDialog,
@@ -14,6 +15,7 @@ import {
   CloudOutline,
   DocumentTextOutline,
   RefreshOutline,
+  SearchOutline,
 } from '@vicons/ionicons5';
 import { getCertificates, deleteCertificate, renewCertificate } from '@/service/api/certificate';
 import { adaptListResponse, adaptResponse } from '@/service/request';
@@ -23,6 +25,7 @@ import CloudflareIssueDialog from './components/CloudflareIssueDialog.vue';
 import ManualDnsDialog from './components/ManualDnsDialog.vue';
 import EmptyState from '@/components/common/EmptyState.vue';
 import { getApiErrorMessage } from '@/utils/error';
+import { matchesKeyword } from '@/utils/search';
 
 const message = useMessage();
 const dialog = useDialog();
@@ -31,6 +34,12 @@ const dialog = useDialog();
 const certList = ref<Api.Certificate[]>([]);
 const loading = ref(false);
 const error = ref('');
+
+/** 模糊搜索：后端 GET /api/certificates 返回全量列表，在前端按名称 / 域名 / 颁发者过滤 */
+const keyword = ref('');
+const filteredCerts = computed(() =>
+  certList.value.filter((cert) => matchesKeyword(keyword.value, [cert.name, cert.domains, cert.issuer]))
+);
 
 // Per-row loading Sets
 const deletingIds = reactive(new Set<string>());
@@ -174,8 +183,22 @@ onMounted(() => {
 
     <!-- 证书表格 -->
     <NCard v-else>
+      <!-- 搜索 -->
+      <NSpace align="center" :size="12" style="margin-bottom: 12px">
+        <NInput
+          v-model:value="keyword"
+          placeholder="搜索名称 / 域名 / 颁发者"
+          clearable
+          style="width: 260px"
+        >
+          <template #prefix>
+            <NIcon><SearchOutline /></NIcon>
+          </template>
+        </NInput>
+      </NSpace>
+
       <CertTable
-        :data="certList"
+        :data="filteredCerts"
         :loading="loading"
         :deleting-ids="deletingIds"
         :renewing-ids="renewingIds"
@@ -183,7 +206,10 @@ onMounted(() => {
         @renew="handleRenew"
       />
       <!-- 空状态 -->
-      <EmptyState v-if="!loading && certList.length === 0" description="暂无证书数据" />
+      <EmptyState
+        v-if="!loading && filteredCerts.length === 0"
+        :description="certList.length > 0 ? '没有匹配的证书' : '暂无证书数据'"
+      />
     </NCard>
 
     <!-- 上传证书弹窗 -->

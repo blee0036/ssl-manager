@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ref, reactive } from 'vue';
+import { ref, reactive, onBeforeUnmount } from 'vue';
 import { useRouter } from 'vue-router';
-import { NCard, NSpace, NButton, NIcon, NResult, useMessage } from 'naive-ui';
-import { RefreshOutline } from '@vicons/ionicons5';
+import { NCard, NSpace, NButton, NIcon, NInput, NResult, useMessage } from 'naive-ui';
+import { RefreshOutline, SearchOutline } from '@vicons/ionicons5';
 import MachineTable from './components/MachineTable.vue';
 import CreateDialog from './components/CreateDialog.vue';
 import InstallCommandDialog from './components/InstallCommandDialog.vue';
@@ -11,6 +11,7 @@ import EmptyState from '@/components/common/EmptyState.vue';
 import { useTable } from '@/hooks/useTable';
 import { fetchMachines, deleteMachine, regenerateToken, revokeToken } from '@/service/api/machine';
 import { getApiErrorMessage } from '@/utils/error';
+import { debounce } from '@/utils/search';
 
 const message = useMessage();
 const router = useRouter();
@@ -20,11 +21,36 @@ const deletingIds = reactive(new Set<string>());
 const regeneratingIds = reactive(new Set<string>());
 const revokingIds = reactive(new Set<string>());
 
+// Search：输入框绑定 keyword，防抖后写入 appliedSearch 并请求后端（GET /api/machines?search=）
+const keyword = ref('');
+const appliedSearch = ref('');
+
 // Table
 const { data, loading, error, pagination, refresh } = useTable<Api.Machine>({
-  fetchFn: fetchMachines,
+  fetchFn: (params) => fetchMachines({ ...params, search: appliedSearch.value }),
   immediate: true,
 });
+
+function applySearch(value: string) {
+  const next = value.trim();
+  if (next === appliedSearch.value) return;
+  appliedSearch.value = next;
+  pagination.page = 1;
+  refresh();
+}
+
+const debouncedSearch = debounce(applySearch, 300);
+
+function onKeywordInput(value: string) {
+  debouncedSearch(value);
+}
+
+function onKeywordClear() {
+  debouncedSearch.cancel();
+  applySearch('');
+}
+
+onBeforeUnmount(() => debouncedSearch.cancel());
 
 // Create dialog
 const showCreateDialog = ref(false);
@@ -163,6 +189,22 @@ async function handleRevokeConfirm() {
 
     <!-- 数据表格 -->
     <NCard v-else>
+      <!-- 搜索 -->
+      <NSpace align="center" :size="12" style="margin-bottom: 12px">
+        <NInput
+          v-model:value="keyword"
+          placeholder="搜索名称 / IP / 主机名"
+          clearable
+          style="width: 260px"
+          @update:value="onKeywordInput"
+          @clear="onKeywordClear"
+        >
+          <template #prefix>
+            <NIcon><SearchOutline /></NIcon>
+          </template>
+        </NInput>
+      </NSpace>
+
       <MachineTable
         :data="data"
         :loading="loading"
@@ -176,7 +218,10 @@ async function handleRevokeConfirm() {
         @deploy="handleDeployClick"
       />
       <!-- 空状态 -->
-      <EmptyState v-if="!loading && data.length === 0" description="暂无机器数据" />
+      <EmptyState
+        v-if="!loading && data.length === 0"
+        :description="appliedSearch ? '没有匹配的机器' : '暂无机器数据'"
+      />
     </NCard>
 
     <!-- 创建机器对话框 -->

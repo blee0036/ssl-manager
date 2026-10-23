@@ -1,11 +1,18 @@
 import { request, adaptResponse, adaptListResponse } from '../request';
 import type { FetchParams, FetchResult } from '@/hooks/useTable';
 
+export interface FetchMachinesParams extends FetchParams {
+  /** 模糊搜索关键字，后端对 name / ip / hostname 做 LIKE '%search%' 匹配 */
+  search?: string;
+}
+
 /** 获取机器列表 */
-export async function fetchMachines(params: FetchParams): Promise<FetchResult<Api.Machine>> {
-  const res = await request.get<Api.Response<Api.Machine[]>>('/api/machines', {
-    params: { page: params.page, per_page: params.pageSize },
-  });
+export async function fetchMachines(params: FetchMachinesParams): Promise<FetchResult<Api.Machine>> {
+  const query: Record<string, string | number> = { page: params.page, per_page: params.pageSize };
+  if (params.search) {
+    query.search = params.search;
+  }
+  const res = await request.get<Api.Response<Api.Machine[]>>('/api/machines', { params: query });
   return adaptListResponse<Api.Machine>(res.data);
 }
 

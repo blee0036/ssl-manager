@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue';
-import { NCard, NSpace, NButton, NIcon, NResult, NSelect, useMessage } from 'naive-ui';
+import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue';
+import { NCard, NSpace, NButton, NIcon, NInput, NResult, NSelect, useMessage } from 'naive-ui';
 import type { DataTableSortState } from 'naive-ui';
-import { RefreshOutline } from '@vicons/ionicons5';
+import { RefreshOutline, SearchOutline } from '@vicons/ionicons5';
 import RootDomainTable from './components/RootDomainTable.vue';
 import CreateDialog from './components/CreateDialog.vue';
 import ImportDialog from './components/ImportDialog.vue';
@@ -14,6 +14,7 @@ import { fetchRootDomains, deleteRootDomain, refreshRootDomain, updateRootDomain
 import type { FetchRootDomainsParams } from '@/service/api/root-domain';
 import { getSystemConfig } from '@/service/api/system';
 import { getApiErrorMessage } from '@/utils/error';
+import { debounce } from '@/utils/search';
 
 const message = useMessage();
 
@@ -25,20 +26,36 @@ const refreshingIds = reactive(new Set<string>());
 const deletingIds = reactive(new Set<string>());
 const togglingIds = reactive(new Set<string>());
 
-// Controlled sort state for NDataTable (synced with filterState.sort_by/sort_order)
-const tableSortState = ref<DataTableSortState | null>(null);
-
 // ============================================================
 // Filter & Sort State
 // ============================================================
 
+// 默认排序：剩余天数升序（已过期 → 即将到期 → 正常，到期未知的排最后；后端 sort_by=days_remaining）
+const DEFAULT_SORT_BY = 'days_remaining';
+const DEFAULT_SORT_ORDER = 'asc';
+
+function toTableSortState(sortBy: string, sortOrder: string): DataTableSortState {
+  return {
+    columnKey: sortBy,
+    order: sortOrder === 'desc' ? 'descend' : 'ascend',
+    sorter: true,
+  } as DataTableSortState;
+}
+
+// Controlled sort state for NDataTable (synced with filterState.sort_by/sort_order)
+const tableSortState = ref<DataTableSortState | null>(toTableSortState(DEFAULT_SORT_BY, DEFAULT_SORT_ORDER));
+
 const filterState = reactive<FetchRootDomainsParams>({
-  sort_by: '',
-  sort_order: '',
+  sort_by: DEFAULT_SORT_BY,
+  sort_order: DEFAULT_SORT_ORDER,
   filter_status: '',
   name: '',
   source: '',
 });
+
+const isDefaultSort = computed(
+  () => filterState.sort_by === DEFAULT_SORT_BY && filterState.sort_order === DEFAULT_SORT_ORDER
+);
 
 // filter_status 取值与后端 root_domain_repo.go 的 rootDomainStatusPredicate 一致
 const filterStatusOptions = [
@@ -106,28 +123,49 @@ function onFilterChange(newFilter: Partial<FetchRootDomainsParams>) {
 }
 
 function onSortChange(sortBy: string, sortOrder: string) {
+  // 取消排序时回到默认排序（剩余天数升序）
+  if (!sortBy || !sortOrder) {
+    sortBy = DEFAULT_SORT_BY;
+    sortOrder = DEFAULT_SORT_ORDER;
+  }
   filterState.sort_by = sortBy;
   filterState.sort_order = sortOrder;
-  if (sortBy) {
-    tableSortState.value = {
-      columnKey: sortBy,
-      order: sortOrder === 'desc' ? 'descend' : 'ascend',
-      sorter: true,
-    } as DataTableSortState;
-  } else {
-    tableSortState.value = null;
-  }
+  tableSortState.value = toTableSortState(sortBy, sortOrder);
   pagination.page = 1;
   refresh();
 }
 
+// 域名模糊搜索：输入框绑定 nameKeyword，防抖后写入 filterState.name（后端 name LIKE '%name%'）
+const nameKeyword = ref('');
+
+function applyNameSearch(value: string) {
+  const next = value.trim();
+  if (next === filterState.name) return;
+  onFilterChange({ name: next });
+}
+
+const debouncedNameSearch = debounce(applyNameSearch, 300);
+
+function onNameKeywordInput(value: string) {
+  debouncedNameSearch(value);
+}
+
+function onNameKeywordClear() {
+  debouncedNameSearch.cancel();
+  applyNameSearch('');
+}
+
+onBeforeUnmount(() => debouncedNameSearch.cancel());
+
 function clearFilters() {
+  debouncedNameSearch.cancel();
+  nameKeyword.value = '';
   filterState.filter_status = '';
   filterState.name = '';
   filterState.source = '';
-  filterState.sort_by = '';
-  filterState.sort_order = '';
-  tableSortState.value = null;
+  filterState.sort_by = DEFAULT_SORT_BY;
+  filterState.sort_order = DEFAULT_SORT_ORDER;
+  tableSortState.value = toTableSortState(DEFAULT_SORT_BY, DEFAULT_SORT_ORDER);
   pagination.page = 1;
   refresh();
 }
@@ -265,6 +303,18 @@ async function handleToggleIgnore(row: Api.RootDomain) {
     <NCard v-else>
       <!-- 筛选区域 -->
       <NSpace align="center" :size="12" style="margin-bottom: 12px">
+        <NInput
+          v-model:value="nameKeyword"
+          placeholder="搜索域名"
+          clearable
+          style="width: 240px"
+          @update:value="onNameKeywordInput"
+          @clear="onNameKeywordClear"
+        >
+          <template #prefix>
+            <NIcon><SearchOutline /></NIcon>
+          </template>
+        </NInput>
         <NSelect
           v-model:value="filterState.filter_status"
           :options="filterStatusOptions"
@@ -282,7 +332,7 @@ async function handleToggleIgnore(row: Api.RootDomain) {
           @update:value="(value: string | null) => onFilterChange({ source: value || '' })"
         />
         <NButton
-          v-if="filterState.filter_status || filterState.source || filterState.name || filterState.sort_by"
+          v-if="filterState.filter_status || filterState.source || filterState.name || nameKeyword || !isDefaultSort"
           size="small"
           quaternary
           @click="clearFilters"
@@ -320,7 +370,10 @@ async function handleToggleIgnore(row: Api.RootDomain) {
       </div>
 
       <!-- 空状态 -->
-      <EmptyState v-if="!loading && data.length === 0" description="暂无根域名到期监控数据" />
+      <EmptyState
+        v-if="!loading && data.length === 0"
+        :description="filterState.name || filterState.filter_status || filterState.source ? '没有符合条件的根域名' : '暂无根域名到期监控数据'"
+      />
     </NCard>
 
     <!-- 手动添加对话框 -->

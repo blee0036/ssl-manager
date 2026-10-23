@@ -17,6 +17,16 @@ import (
 const rootDomainColumns = `id, name, source, registrable_domain, expiry_date, expiry_source, last_checked_at,
 	last_status, last_error, monitor_enabled, alert_ignored, created_at, updated_at`
 
+// rootDomainExpiryNullsLastExpr orders by expiry time with unknown (NULL) expiry
+// always last, regardless of direction: the leading "expiry_date IS NULL" term
+// (0 = known, 1 = unknown) is always ascending, and buildRootDomainOrderByClause
+// appends the requested direction after the trailing epoch-seconds term.
+const rootDomainExpiryNullsLastExpr = "expiry_date IS NULL, CAST(strftime('%s', expiry_date) AS INTEGER)"
+
+// rootDomainDefaultOrderBy is used when sort_by is empty or not whitelisted:
+// soonest expiry first (expired → expiring → ok), unknown expiry last.
+const rootDomainDefaultOrderBy = "ORDER BY " + rootDomainExpiryNullsLastExpr + " ASC, id ASC"
+
 // rootDomainSortByWhitelist maps allowed sort_by values to safe SQL expressions.
 // Aligns with DomainRepository.sortByWhitelist conventions.
 var rootDomainSortByWhitelist = map[string]string{
@@ -25,6 +35,9 @@ var rootDomainSortByWhitelist = map[string]string{
 	"expiry_date":     "COALESCE(strftime('%s', expiry_date), 0)",
 	"last_checked_at": "COALESCE(strftime('%s', last_checked_at), 0)",
 	"created_at":      "COALESCE(strftime('%s', created_at), 0)",
+	// days_remaining is not persisted (computed from expiry_date at read time) and
+	// is monotonic in expiry_date, so it sorts by expiry; unknown is always last.
+	"days_remaining": rootDomainExpiryNullsLastExpr,
 }
 
 // RootDomainRepository handles root domain (registration expiry) CRUD, listing,
@@ -573,12 +586,13 @@ func rootDomainStatusPredicate(status string, thresholdDays int) (string, bool) 
 }
 
 // buildRootDomainOrderByClause returns the ORDER BY clause for a given sort_by
-// and sort_order. Unknown sort_by falls back to newest-first. A stable id tie
-// breaker is always appended for deterministic pagination.
+// and sort_order. Empty/unknown sort_by falls back to rootDomainDefaultOrderBy
+// (soonest expiry first, unknown last). A stable id tie breaker is always
+// appended for deterministic pagination.
 func buildRootDomainOrderByClause(sortBy, sortOrder string) string {
 	expr, ok := rootDomainSortByWhitelist[sortBy]
 	if !ok {
-		return "ORDER BY created_at DESC, id ASC"
+		return rootDomainDefaultOrderBy
 	}
 	direction := "ASC"
 	if strings.ToLower(sortOrder) == "desc" {

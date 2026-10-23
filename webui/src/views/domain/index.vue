@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ref, reactive, computed } from 'vue';
-import { NCard, NSpace, NButton, NIcon, NResult, NSelect, NModal, NSpin, useMessage } from 'naive-ui';
+import { ref, reactive, computed, onBeforeUnmount } from 'vue';
+import { NCard, NSpace, NButton, NIcon, NInput, NResult, NSelect, NModal, NSpin, useMessage } from 'naive-ui';
 import type { DataTableSortState } from 'naive-ui';
-import { RefreshOutline } from '@vicons/ionicons5';
+import { RefreshOutline, SearchOutline } from '@vicons/ionicons5';
 import DomainTable from './components/DomainTable.vue';
 import CreateDialog from './components/CreateDialog.vue';
 import BatchCreateDialog from './components/BatchCreateDialog.vue';
@@ -13,6 +13,7 @@ import { useTable } from '@/hooks/useTable';
 import { fetchDomains, deleteDomain, probeDomain, updateDomain } from '@/service/api/domain';
 import type { FetchDomainsParams } from '@/service/api/domain';
 import { getApiErrorMessage } from '@/utils/error';
+import { debounce } from '@/utils/search';
 import { usePermission } from '@/hooks/usePermission';
 
 const message = useMessage();
@@ -108,7 +109,31 @@ function onSortChange(sortBy: string, sortOrder: string) {
   refresh();
 }
 
+// 域名模糊搜索：输入框绑定 nameKeyword，防抖后写入 filterState.name（后端 d.name LIKE '%name%'）
+const nameKeyword = ref('');
+
+function applyNameSearch(value: string) {
+  const next = value.trim();
+  if (next === filterState.name) return;
+  onFilterChange({ name: next });
+}
+
+const debouncedNameSearch = debounce(applyNameSearch, 300);
+
+function onNameKeywordInput(value: string) {
+  debouncedNameSearch(value);
+}
+
+function onNameKeywordClear() {
+  debouncedNameSearch.cancel();
+  applyNameSearch('');
+}
+
+onBeforeUnmount(() => debouncedNameSearch.cancel());
+
 function clearFilters() {
+  debouncedNameSearch.cancel();
+  nameKeyword.value = '';
   filterState.filter_status = '';
   filterState.name = '';
   filterState.sort_by = '';
@@ -373,6 +398,18 @@ function cancelBatchDelete() {
     <NCard v-else>
       <!-- 筛选区域 -->
       <NSpace align="center" :size="12" style="margin-bottom: 12px">
+        <NInput
+          v-model:value="nameKeyword"
+          placeholder="搜索域名"
+          clearable
+          style="width: 240px"
+          @update:value="onNameKeywordInput"
+          @clear="onNameKeywordClear"
+        >
+          <template #prefix>
+            <NIcon><SearchOutline /></NIcon>
+          </template>
+        </NInput>
         <NSelect
           v-model:value="filterState.filter_status"
           :options="filterStatusOptions"
@@ -382,7 +419,7 @@ function cancelBatchDelete() {
           @update:value="(value: string | null) => onFilterChange({ filter_status: value || '' })"
         />
         <NButton
-          v-if="filterState.filter_status || filterState.name || filterState.sort_by"
+          v-if="filterState.filter_status || filterState.name || nameKeyword || filterState.sort_by"
           size="small"
           quaternary
           @click="clearFilters"
@@ -422,7 +459,10 @@ function cancelBatchDelete() {
       </div>
 
       <!-- 空状态 -->
-      <EmptyState v-if="!loading && data.length === 0" description="暂无域名监控数据" />
+      <EmptyState
+        v-if="!loading && data.length === 0"
+        :description="filterState.name || filterState.filter_status ? '没有符合条件的域名' : '暂无域名监控数据'"
+      />
     </NCard>
 
     <!-- 新增域名对话框 -->

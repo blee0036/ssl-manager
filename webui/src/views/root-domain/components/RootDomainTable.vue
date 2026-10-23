@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, h } from 'vue';
-import type { DataTableColumns, DataTableSortState } from 'naive-ui';
+import type { DataTableColumns, DataTableSortOrder, DataTableSortState } from 'naive-ui';
 import { NDataTable, NButton, NSpace, NTag, NTooltip } from 'naive-ui';
 import { formatDate, formatDateTime } from '@/utils/date';
 import { usePermission } from '@/hooks/usePermission';
@@ -38,6 +38,15 @@ const sourceLabels: Record<string, string> = {
   cloudflare: 'Cloudflare',
 };
 
+/**
+ * 受控排序：列头箭头由父组件传入的 sortState 决定（naive-ui 通过列的 sortOrder 受控），
+ * 保证箭头与实际请求的 sort_by/sort_order 一致（含默认排序与「清空筛选」重置）。
+ */
+function sortOrderOf(key: string): DataTableSortOrder {
+  const s = props.sortState;
+  return s && s.columnKey === key ? s.order : false;
+}
+
 // ============================================================
 // 到期状态渲染（未知 / 已过期 / 即将到期 / 正常）
 // 纯决策逻辑抽取到 ../utils/expiryState，便于在 node 环境下单测
@@ -56,6 +65,7 @@ const columns = computed<DataTableColumns<Api.RootDomain>>(() => {
     width: 220,
     minWidth: 160,
     sorter: true,
+    sortOrder: sortOrderOf('name'),
     ellipsis: { tooltip: true },
     render(row) {
       const parts = [h('span', null, row.name)];
@@ -72,6 +82,7 @@ const columns = computed<DataTableColumns<Api.RootDomain>>(() => {
     key: 'source',
     width: 110,
     sorter: true,
+    sortOrder: sortOrderOf('source'),
     render(row) {
       return sourceLabels[row.source] || row.source || '-';
     },
@@ -92,6 +103,7 @@ const columns = computed<DataTableColumns<Api.RootDomain>>(() => {
     key: 'expiry_date',
     width: 160,
     sorter: true,
+    sortOrder: sortOrderOf('expiry_date'),
     render(row) {
       if (!row.expiry_date) {
         return h(NTag, { size: 'small', type: 'default' }, () => '未知');
@@ -113,6 +125,11 @@ const columns = computed<DataTableColumns<Api.RootDomain>>(() => {
     title: '剩余天数',
     key: 'days_remaining',
     width: 140,
+    // 后端按到期时间排序，到期未知的无论升降序都排在最后
+    sorter: true,
+    sortOrder: sortOrderOf('days_remaining'),
+    // 本列升序即默认排序，只在升序 / 降序之间切换（“取消排序”与升序等价）
+    customNextSortOrder: (order) => (order === 'ascend' ? 'descend' : 'ascend'),
     render(row) {
       // 未知：expiry_date 或 days_remaining 为空
       if (row.expiry_date == null || row.days_remaining == null) {
@@ -129,6 +146,7 @@ const columns = computed<DataTableColumns<Api.RootDomain>>(() => {
     key: 'last_checked_at',
     width: 160,
     sorter: true,
+    sortOrder: sortOrderOf('last_checked_at'),
     render(row) {
       return row.last_checked_at ? formatDateTime(row.last_checked_at) : '-';
     },
@@ -261,7 +279,6 @@ function handleSorterChange(sorter: DataTableSortState | DataTableSortState[] | 
     :row-key="(row: Api.RootDomain) => row.id"
     :scroll-x="1400"
     :bordered="false"
-    :sort-state="sortState ?? undefined"
     remote
     @update:sorter="handleSorterChange"
   />

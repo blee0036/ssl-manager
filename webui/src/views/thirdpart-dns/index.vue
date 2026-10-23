@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, reactive } from 'vue';
-import { NCard, NSpace, NButton, NIcon, NResult, useMessage } from 'naive-ui';
-import { RefreshOutline } from '@vicons/ionicons5';
+import { ref, reactive, computed } from 'vue';
+import { NCard, NSpace, NButton, NIcon, NInput, NResult, useMessage } from 'naive-ui';
+import { RefreshOutline, SearchOutline } from '@vicons/ionicons5';
 import DnsTable from './components/DnsTable.vue';
 import CreateEditDialog from './components/CreateEditDialog.vue';
 import SyncLogDrawer from './components/SyncLogDrawer.vue';
@@ -9,6 +9,7 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue';
 import EmptyState from '@/components/common/EmptyState.vue';
 import { useTable } from '@/hooks/useTable';
 import { getApiErrorMessage } from '@/utils/error';
+import { matchesKeyword } from '@/utils/search';
 import {
   fetchThirdpartDnsList,
   deleteThirdpartDns,
@@ -23,6 +24,14 @@ const { data, loading, error, pagination, refresh } = useTable<Api.ThirdpartDns>
   fetchFn: fetchThirdpartDnsList,
   immediate: true,
 });
+
+// 模糊搜索：后端 GET /api/thirdpart-dns 返回全量列表，在前端按名称 / 类型 / 主域名过滤
+const keyword = ref('');
+const filteredData = computed(() =>
+  data.value.filter((item) => matchesKeyword(keyword.value, [item.name, item.type, item.main_domains]))
+);
+// 分页条目数跟随过滤结果
+const tablePagination = computed(() => ({ ...pagination, itemCount: filteredData.value.length }));
 
 // Per-row loading state Sets
 const syncingIds = reactive(new Set<string>());
@@ -152,10 +161,24 @@ function handleViewLogs(item: Api.ThirdpartDns) {
 
     <!-- 数据表格 -->
     <NCard v-else>
+      <!-- 搜索 -->
+      <NSpace align="center" :size="12" style="margin-bottom: 12px">
+        <NInput
+          v-model:value="keyword"
+          placeholder="搜索名称 / 类型 / 主域名"
+          clearable
+          style="width: 260px"
+        >
+          <template #prefix>
+            <NIcon><SearchOutline /></NIcon>
+          </template>
+        </NInput>
+      </NSpace>
+
       <DnsTable
-        :data="data"
+        :data="filteredData"
         :loading="loading"
-        :pagination="pagination"
+        :pagination="tablePagination"
         :syncing-ids="syncingIds"
         :deleting-ids="deletingIds"
         :toggling-ids="togglingIds"
@@ -166,7 +189,10 @@ function handleViewLogs(item: Api.ThirdpartDns) {
         @toggle-enabled="handleToggleEnabled"
       />
       <!-- 空状态 -->
-      <EmptyState v-if="!loading && data.length === 0" description="暂无 DNS 配置" />
+      <EmptyState
+        v-if="!loading && filteredData.length === 0"
+        :description="data.length > 0 ? '没有匹配的 DNS 配置' : '暂无 DNS 配置'"
+      />
     </NCard>
 
     <!-- 新增/编辑对话框 -->
