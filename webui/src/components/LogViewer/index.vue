@@ -193,7 +193,7 @@ function handleRefresh() {
 
 .log-viewer-container-wrapper {
   position: relative;
-  border: 1px solid var(--n-border-color, #e0e0e6);
+  border: 1px solid var(--app-border);
   border-radius: 4px;
   background-color: #1e1e2e;
 }
@@ -214,7 +214,7 @@ function handleRefresh() {
   align-items: center;
   justify-content: center;
   min-height: 120px;
-  background-color: #fafafa;
+  background-color: var(--app-placeholder-bg);
   border-radius: 4px;
 }
 

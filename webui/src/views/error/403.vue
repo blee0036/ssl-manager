@@ -10,8 +10,8 @@ function goBack() {
 
 <template>
   <div class="flex-col-center min-h-screen">
-    <h1 class="text-6xl font-bold text-gray-300">403</h1>
-    <p class="text-lg text-gray-500 mt-4">抱歉，您没有权限访问此页面</p>
+    <h1 class="text-6xl font-bold text-gray-300 dark:text-gray-600">403</h1>
+    <p class="text-lg text-gray-500 dark:text-gray-400 mt-4">抱歉，您没有权限访问此页面</p>
     <button
       class="mt-6 px-4 py-2 bg-primary text-white rounded cursor-pointer"
       @click="goBack"

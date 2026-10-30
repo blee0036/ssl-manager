@@ -225,7 +225,7 @@ function handleClose() {
     >
       <!-- 输入区域 -->
       <template v-if="!showResult">
-        <p class="mb-3 text-sm text-gray-500">
+        <p class="mb-3 text-sm text-gray-500 dark:text-gray-400">
           输入域名，支持逗号、空格、换行分隔。每个域名将独立添加到监控列表。
         </p>
         <NInput
@@ -244,7 +244,7 @@ function handleClose() {
             :show-indicator="true"
             status="info"
           />
-          <p class="mt-2 text-sm text-gray-500">正在添加域名，请勿关闭...</p>
+          <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">正在添加域名，请勿关闭...</p>
         </div>
       </template>
 
@@ -270,7 +270,7 @@ function handleClose() {
               <NListItem v-for="item in batchResult.failed" :key="item.domain">
                 <NSpace align="center" size="small">
                   <NTag type="error" size="small">{{ item.domain }}</NTag>
-                  <span class="text-sm text-gray-500">{{ item.error }}</span>
+                  <span class="text-sm text-gray-500 dark:text-gray-400">{{ item.error }}</span>
                 </NSpace>
               </NListItem>
             </NList>

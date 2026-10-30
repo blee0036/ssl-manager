@@ -162,10 +162,10 @@ function toggleWrap() {
 
 <style scoped>
 .code-block {
-  border: 1px solid var(--n-border-color, #e0e0e6);
+  border: 1px solid var(--app-border);
   border-radius: 6px;
   overflow: hidden;
-  background-color: var(--n-color, #fafafc);
+  background-color: var(--app-code-bg);
   font-size: 13px;
 }
 
@@ -174,14 +174,14 @@ function toggleWrap() {
   align-items: center;
   justify-content: space-between;
   padding: 4px 8px;
-  background-color: var(--n-color-embedded, #f3f3f5);
-  border-bottom: 1px solid var(--n-border-color, #e0e0e6);
+  background-color: var(--app-code-toolbar-bg);
+  border-bottom: 1px solid var(--app-border);
   min-height: 32px;
 }
 
 .code-block__lang {
   font-size: 11px;
-  color: var(--n-text-color-3, #999);
+  color: var(--app-text-3);
   text-transform: uppercase;
   font-weight: 500;
   letter-spacing: 0.5px;
@@ -202,6 +202,6 @@ function toggleWrap() {
   font-family: 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace;
   font-size: 13px;
   line-height: 1.6;
-  color: var(--n-text-color, #333);
+  color: var(--app-code-text);
 }
 </style>

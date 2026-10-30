@@ -94,11 +94,11 @@ const drawerVisible = computed({
   <!-- Desktop: Fixed sidebar -->
   <aside
     v-else
-    class="h-full flex flex-col bg-white border-r border-gray-200 transition-width duration-200"
+    class="h-full flex flex-col bg-app-surface border-r border-app-divider transition-width duration-200"
     :class="appStore.siderCollapsed ? 'w-64px' : 'w-220px'"
   >
     <!-- Logo area -->
-    <div class="h-56px flex items-center px-4 border-b border-gray-200 shrink-0 overflow-hidden">
+    <div class="h-56px flex items-center px-4 border-b border-app-divider shrink-0 overflow-hidden">
       <span v-if="!appStore.siderCollapsed" class="font-bold text-lg whitespace-nowrap">
         SSL Manager
       </span>

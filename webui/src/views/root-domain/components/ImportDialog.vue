@@ -143,7 +143,7 @@ function handleClose() {
 
       <!-- 导入表单 -->
       <template v-if="!result">
-        <p class="mb-3 text-sm text-gray-500">
+        <p class="mb-3 text-sm text-gray-500 dark:text-gray-400">
           扫描 Cloudflare Zone 列表，将其中的根域名登记为待监控对象。可直接填入 API Token，或选择已保存的 Cloudflare DNS 配置。
         </p>
 

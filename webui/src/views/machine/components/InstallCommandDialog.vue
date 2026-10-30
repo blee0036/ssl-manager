@@ -33,7 +33,7 @@ function handleClose() {
       closable
       @close="handleClose"
     >
-      <p class="mb-3 text-sm text-gray-600">
+      <p class="mb-3 text-sm text-gray-600 dark:text-gray-300">
         请在目标机器上执行以下命令安装 Agent：
       </p>
       <CodeBlock
@@ -42,7 +42,7 @@ function handleClose() {
         :wrap="true"
         :show-copy="true"
       />
-      <p class="mt-3 text-sm text-gray-400">
+      <p class="mt-3 text-sm text-gray-400 dark:text-gray-500">
         Token 仅展示一次，请妥善保存。关闭此对话框后将无法再次查看。
       </p>
 

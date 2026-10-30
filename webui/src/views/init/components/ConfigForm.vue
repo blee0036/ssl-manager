@@ -224,7 +224,7 @@ async function handleSubmit() {
           placeholder="360"
         />
       </NFormItem>
-      <span class="text-xs text-gray-500">设为 0 禁用定时同步，推荐值 360</span>
+      <span class="text-xs text-gray-500 dark:text-gray-400">设为 0 禁用定时同步，推荐值 360</span>
     </NCard>
 
     <!-- Turnstile 配置 -->

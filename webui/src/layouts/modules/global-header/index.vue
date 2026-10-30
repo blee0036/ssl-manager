@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { NButton, NTag, NIcon, NSpace } from 'naive-ui';
-import { MenuOutline, LogOutOutline } from '@vicons/ionicons5';
+import { computed, type Component } from 'vue';
+import { NButton, NTag, NIcon, NSpace, NPopselect } from 'naive-ui';
+import { MenuOutline, LogOutOutline, DesktopOutline, SunnyOutline, MoonOutline } from '@vicons/ionicons5';
 import { useAuthStore, useAppStore } from '@/store';
+import { isThemeMode, type ThemeMode } from '@/utils/theme';
 
 const authStore = useAuthStore();
 const appStore = useAppStore();
@@ -20,6 +22,26 @@ const roleType: Record<string, 'success' | 'info' | 'warning'> = {
   readonly: 'warning',
 };
 
+const themeOptions: { label: string; value: ThemeMode }[] = [
+  { label: '跟随系统', value: 'system' },
+  { label: '浅色', value: 'light' },
+  { label: '深色', value: 'dark' },
+];
+
+const themeIcon: Record<ThemeMode, Component> = {
+  system: DesktopOutline,
+  light: SunnyOutline,
+  dark: MoonOutline,
+};
+
+const currentThemeIcon = computed(() => themeIcon[appStore.themeMode]);
+
+function handleThemeChange(value: string) {
+  if (isThemeMode(value)) {
+    appStore.setThemeMode(value);
+  }
+}
+
 function handleLogout() {
   authStore.logout();
 }
@@ -35,7 +57,7 @@ function handleToggleSider() {
 </script>
 
 <template>
-  <header class="h-56px flex items-center justify-between px-4 border-b border-gray-200 bg-white shrink-0">
+  <header class="h-56px flex items-center justify-between px-4 border-b border-app-divider bg-app-surface shrink-0">
     <!-- Left: hamburger / collapse toggle -->
     <div class="flex items-center gap-2">
       <NButton quaternary circle size="small" @click="handleToggleSider">
@@ -47,9 +69,23 @@ function handleToggleSider() {
       </NButton>
     </div>
 
-    <!-- Right: user info + logout -->
+    <!-- Right: theme + user info + logout -->
     <NSpace align="center" :size="12">
-      <span class="text-sm text-gray-700">{{ authStore.username }}</span>
+      <NPopselect
+        :value="appStore.themeMode"
+        :options="themeOptions"
+        trigger="click"
+        @update:value="handleThemeChange"
+      >
+        <NButton quaternary circle size="small" aria-label="切换主题" title="切换主题">
+          <template #icon>
+            <NIcon :size="18">
+              <component :is="currentThemeIcon" />
+            </NIcon>
+          </template>
+        </NButton>
+      </NPopselect>
+      <span class="text-sm text-gray-700 dark:text-gray-200">{{ authStore.username }}</span>
       <NTag v-if="authStore.role" :type="roleType[authStore.role] || 'default'" size="small" round>
         {{ roleLabel[authStore.role] || authStore.role }}
       </NTag>

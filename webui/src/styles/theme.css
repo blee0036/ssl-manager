@@ -1,0 +1,43 @@
+/**
+ * 全局主题变量
+ *
+ * 由 <html class="dark"> 切换。浅色取值保持与原先硬编码颜色一致，
+ * 深色取值对齐 Naive UI darkTheme（bodyColor #101014 / cardColor #18181c）。
+ * 不要在自定义样式里依赖 var(--n-xxx, fallback)：--n-* 只在 Naive 组件根节点上定义，
+ * 组件外部拿到的永远是浅色 fallback。
+ */
+:root {
+  /* 主内容区背景 */
+  --app-layout-bg: #f9fafb;
+  /* 顶栏、侧栏等表面 */
+  --app-surface: #ffffff;
+  /* 布局分割线 */
+  --app-divider: #e5e7eb;
+  /* 自定义组件边框 */
+  --app-border: #e0e0e6;
+  /* 代码块 */
+  --app-code-bg: #fafafc;
+  --app-code-toolbar-bg: #f3f3f5;
+  --app-code-text: #333333;
+  /* 次要文字 */
+  --app-text-3: #999999;
+  /* 空状态底色 */
+  --app-placeholder-bg: #fafafa;
+}
+
+html.dark {
+  --app-layout-bg: #101014;
+  --app-surface: #18181c;
+  --app-divider: rgba(255, 255, 255, 0.09);
+  --app-border: rgba(255, 255, 255, 0.12);
+  --app-code-bg: #1e1e22;
+  --app-code-toolbar-bg: #26262a;
+  --app-code-text: rgba(255, 255, 255, 0.82);
+  --app-text-3: rgba(255, 255, 255, 0.52);
+  --app-placeholder-bg: #1e1e22;
+}
+
+html.dark body {
+  background-color: #101014;
+  color: rgba(255, 255, 255, 0.82);
+}

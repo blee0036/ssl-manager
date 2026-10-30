@@ -64,7 +64,7 @@ function handleConfirm() {
       :closable="!loading"
       @close="handleClose"
     >
-      <p class="text-sm text-gray-600">{{ content }}</p>
+      <p class="text-sm text-gray-600 dark:text-gray-300">{{ content }}</p>
 
       <template #footer>
         <NSpace justify="end">

@@ -227,7 +227,7 @@ onMounted(() => {
             placeholder="24"
           />
         </NFormItem>
-        <span class="text-xs text-gray-500">登录凭证（JWT）的有效期，超过此时长需要重新登录，推荐值 24，最大 8760（365 天）</span>
+        <span class="text-xs text-gray-500 dark:text-gray-400">登录凭证（JWT）的有效期，超过此时长需要重新登录，推荐值 24，最大 8760（365 天）</span>
       </NCard>
 
       <!-- Agent 配置 -->
@@ -257,7 +257,7 @@ onMounted(() => {
             placeholder="600"
           />
         </NFormItem>
-        <span class="text-xs text-gray-500">
+        <span class="text-xs text-gray-500 dark:text-gray-400">
           心跳中断持续超过此时长才推送离线告警。心跳超时只影响列表上的在线状态，这里才决定是否发通知，
           调大可避免网络抖动造成「告警 + 恢复」成对刷屏。实际生效值不会小于心跳超时，推荐值 600
         </span>
@@ -339,7 +339,7 @@ onMounted(() => {
             placeholder="15"
           />
         </NFormItem>
-        <span class="text-xs text-gray-500">单次 TLS 握手的超时时间，过小会把源站的正常波动误判成故障，推荐值 15</span>
+        <span class="text-xs text-gray-500 dark:text-gray-400">单次 TLS 握手的超时时间，过小会把源站的正常波动误判成故障，推荐值 15</span>
         <NFormItem label="探测重试次数" style="margin-top: 12px">
           <NInputNumber
             v-model:value="model.domain_monitor.probe_retries"
@@ -349,7 +349,7 @@ onMounted(() => {
             placeholder="2"
           />
         </NFormItem>
-        <span class="text-xs text-gray-500">同一轮探测内失败后的重试次数，瞬时丢包在当轮就能消化掉，设为 0 表示不重试，推荐值 2</span>
+        <span class="text-xs text-gray-500 dark:text-gray-400">同一轮探测内失败后的重试次数，瞬时丢包在当轮就能消化掉，设为 0 表示不重试，推荐值 2</span>
         <NFormItem label="重试间隔（秒）" style="margin-top: 12px">
           <NInputNumber
             v-model:value="model.domain_monitor.retry_delay_seconds"
@@ -359,7 +359,7 @@ onMounted(() => {
             placeholder="2"
           />
         </NFormItem>
-        <span class="text-xs text-gray-500">两次探测尝试之间的等待时间，推荐值 2</span>
+        <span class="text-xs text-gray-500 dark:text-gray-400">两次探测尝试之间的等待时间，推荐值 2</span>
         <NFormItem label="连续失败几轮才告警" style="margin-top: 12px">
           <NInputNumber
             v-model:value="model.domain_monitor.alert_after_failures"
@@ -369,7 +369,7 @@ onMounted(() => {
             placeholder="2"
           />
         </NFormItem>
-        <span class="text-xs text-gray-500">
+        <span class="text-xs text-gray-500 dark:text-gray-400">
           连续失败达到此轮数才推送告警，设为 1 表示首轮失败即告警。
           调大可过滤偶发抖动，但真实故障的告警也会相应延后（每轮相隔一个检查间隔），推荐值 2
         </span>
@@ -386,7 +386,7 @@ onMounted(() => {
             placeholder="14"
           />
         </NFormItem>
-        <span class="text-xs text-gray-500">根域名注册到期剩余天数低于此值时触发预警，推荐值 14</span>
+        <span class="text-xs text-gray-500 dark:text-gray-400">根域名注册到期剩余天数低于此值时触发预警，推荐值 14</span>
         <NFormItem label="WHOIS 刷新间隔（分钟）" style="margin-top: 12px">
           <NInputNumber
             v-model:value="model.domain_expiry!.refresh_interval_minutes"
@@ -396,7 +396,7 @@ onMounted(() => {
             placeholder="1440"
           />
         </NFormItem>
-        <span class="text-xs text-gray-500">周期性刷新根域名 WHOIS 到期信息的间隔，设为 0 停用周期刷新，推荐值 1440（1 天），最大 525600（365 天）</span>
+        <span class="text-xs text-gray-500 dark:text-gray-400">周期性刷新根域名 WHOIS 到期信息的间隔，设为 0 停用周期刷新，推荐值 1440（1 天），最大 525600（365 天）</span>
         <NFormItem label="WHOIS 查询超时（秒）" style="margin-top: 12px">
           <NInputNumber
             v-model:value="model.domain_expiry!.whois_timeout_seconds"
@@ -406,7 +406,7 @@ onMounted(() => {
             placeholder="10"
           />
         </NFormItem>
-        <span class="text-xs text-gray-500">单次 WHOIS 查询的超时时间，推荐值 10</span>
+        <span class="text-xs text-gray-500 dark:text-gray-400">单次 WHOIS 查询的超时时间，推荐值 10</span>
       </NCard>
 
       <!-- DNS 同步 -->
@@ -419,7 +419,7 @@ onMounted(() => {
             placeholder="360"
           />
         </NFormItem>
-        <span class="text-xs text-gray-500">设为 0 禁用定时同步，推荐值 360</span>
+        <span class="text-xs text-gray-500 dark:text-gray-400">设为 0 禁用定时同步，推荐值 360</span>
       </NCard>
 
       <!-- 数据清理 -->
@@ -432,7 +432,7 @@ onMounted(() => {
             placeholder="7"
           />
         </NFormItem>
-        <span class="text-xs text-gray-500">清理超过指定天数的历史记录（告警、日志、监控结果），设为 0 禁用清理</span>
+        <span class="text-xs text-gray-500 dark:text-gray-400">清理超过指定天数的历史记录（告警、日志、监控结果），设为 0 禁用清理</span>
         <NFormItem label="最少保留条数" style="margin-top: 12px">
           <NInputNumber
             v-model:value="model.cleanup!.min_keep_count"
@@ -441,7 +441,7 @@ onMounted(() => {
             placeholder="1000"
           />
         </NFormItem>
-        <span class="text-xs text-gray-500">无论多旧，每个表至少保留这么多条记录</span>
+        <span class="text-xs text-gray-500 dark:text-gray-400">无论多旧，每个表至少保留这么多条记录</span>
       </NCard>
 
       <!-- Turnstile 配置 -->

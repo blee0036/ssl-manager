@@ -66,10 +66,10 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="flex-center min-h-screen bg-gray-50 p-4">
+  <div class="flex-center min-h-screen bg-app-layout p-4">
     <div class="w-full max-w-600px">
       <h1 class="text-2xl font-bold text-center mb-2">系统初始化</h1>
-      <p class="text-center text-gray-500 mb-6">首次使用请完成以下配置</p>
+      <p class="text-center text-gray-500 dark:text-gray-400 mb-6">首次使用请完成以下配置</p>
 
       <NSteps :current="currentStep" class="mb-6">
         <NStep title="创建管理员" />

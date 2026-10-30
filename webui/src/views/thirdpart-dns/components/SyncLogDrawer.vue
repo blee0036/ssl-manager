@@ -253,7 +253,7 @@ defineExpose({ refresh });
 
 .sync-log-entry {
   padding: 12px;
-  border: 1px solid var(--n-border-color, #e0e0e6);
+  border: 1px solid var(--app-border);
   border-radius: 6px;
 }
 
@@ -266,7 +266,7 @@ defineExpose({ refresh });
 
 .sync-log-time {
   font-size: 13px;
-  color: var(--n-text-color-3, #999);
+  color: var(--app-text-3);
 }
 
 .sync-log-summary {
@@ -280,6 +280,11 @@ defineExpose({ refresh });
   padding: 4px 8px;
   background: rgba(208, 48, 80, 0.06);
   border-radius: 4px;
+}
+
+html.dark .sync-log-error {
+  color: #e88080;
+  background: rgba(232, 128, 128, 0.1);
 }
 
 .sync-log-collapse {

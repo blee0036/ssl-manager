@@ -23,6 +23,12 @@ export default defineConfig({
   theme: {
     colors: {
       primary: '#18a058',
+      // 随深浅主题切换的颜色，取值见 src/styles/theme.css
+      app: {
+        layout: 'var(--app-layout-bg)',
+        surface: 'var(--app-surface)',
+        divider: 'var(--app-divider)',
+      },
     },
   },
 });

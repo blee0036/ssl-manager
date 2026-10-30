@@ -90,6 +90,10 @@ onMounted(() => {
   box-sizing: border-box;
 }
 
+html.dark .login-page {
+  background: linear-gradient(135deg, #1f2550 0%, #2e1c40 100%);
+}
+
 .login-container {
   width: 100%;
   max-width: 420px;

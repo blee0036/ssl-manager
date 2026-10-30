@@ -5,6 +5,19 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>SSL Manager</title>
+    <script>
+      // 首屏渲染前应用深色模式，避免浅色闪烁。逻辑需与 src/utils/theme.ts 保持一致。
+      (function () {
+        try {
+          var mode = localStorage.getItem('ssl-manager:theme-mode');
+          var dark = mode === 'dark' || (mode !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          if (dark) {
+            document.documentElement.classList.add('dark');
+            document.documentElement.style.colorScheme = 'dark';
+          }
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="app"></div>

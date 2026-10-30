@@ -4,6 +4,7 @@ import App from './App.vue';
 import { router } from './router';
 import { setupDirectives } from './directives';
 import 'virtual:uno.css';
+import './styles/theme.css';
 import './styles/mobile.css';
 
 const chunkReloadKey = 'ssl-manager:chunk-reload-at';
